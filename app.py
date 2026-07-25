@@ -239,6 +239,32 @@ def api_collect(pid: int, body: Dict[str, Any], user: str = Depends(require_user
     return {"job_id": job_id, "active": jobs.active_job()}
 
 
+@app.post("/api/projects/{pid}/collect-extensive")
+def api_collect_extensive(pid: int, body: Dict[str, Any], user: str = Depends(require_user)):
+    """One-click extensive research: enqueue a full-year, monthly-chunked, market-filtered,
+    deduplicated collection across the chosen channels. The user picks channels + year
+    (the 'manual layer') — nothing auto-fires on study creation.
+    """
+    _project_or_404(pid)
+    channels = [c for c in (body.get("channels") or ["news"]) if c]
+    year = int(body.get("year", 2026))
+    market_only = bool(body.get("market_only", True))
+    base = {
+        "chunk": "monthly",           # beats the ~100-results/query cap → extensive
+        "fetch_bodies": False,
+        "market_only": market_only,   # honored by news; ignored by channels that don't gate
+        "start_date": f"{year}-01-01",
+        "end_date": f"{year}-12-31",
+    }
+    enqueued = []
+    for ch in channels:
+        job_id = jobs.enqueue(pid, ch, dict(base), triggered_by=user)
+        enqueued.append({"channel": ch, "job_id": job_id})
+    storage.audit("collect.extensive", f"{year} full-year across {', '.join(channels)}",
+                  acting_user=user, project_id=pid)
+    return {"year": year, "channels": channels, "jobs": enqueued, "active": jobs.active_job()}
+
+
 @app.get("/api/jobs/active")
 def api_active_job(user: str = Depends(require_user)):
     return {"active": jobs.active_job()}

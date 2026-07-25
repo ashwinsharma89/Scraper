@@ -144,8 +144,10 @@ el("wizard-form").addEventListener("submit", async (e) => {
   try {
     const r = await api("/api/projects/wizard", { method: "POST", body: intake });
     el("wizard-modal").classList.add("hidden"); e.target.reset();
-    State.projectId = r.id; toast(`Study "${r.name}" created`);
+    State.projectId = r.id; toast(`Study "${r.name}" created — run Extensive research to populate it`);
     await loadProjects();
+    // Manual layer: land on Collect so the one-click Extensive-research panel is right there.
+    switchView("collect");
   } catch (err) { toast(err.message, true); }
 });
 
@@ -437,10 +439,32 @@ let jobPoll = null;
 async function viewCollect(root) {
   const info = State.channels.info;
   const mkt = (State.project.config.market || {});
-  root.innerHTML = helpBox("collect") + `<div class="card"><div class="card-head"><h2>Collect</h2>
+  const yr = new Date().getFullYear();
+  root.innerHTML = helpBox("collect") + `<div class="card" style="border-color:var(--navy)">
+    <div class="card-head"><h2>🔬 Extensive research (one click)</h2></div>
+    <p class="muted">Full-year, month-by-month collection across the chosen channels
+      (monthly chunking beats Google News's ~100-results cap), market-filtered and
+      de-duplicated. You pick the channels and year — this never auto-fires.</p>
+    <div class="row">
+      <label style="flex:0 0 120px">Year <input id="ext-year" type="number" value="${yr}" min="2015" max="${yr}" /></label>
+      <div style="flex:1">
+        <div style="font-weight:600;font-size:13px;margin-bottom:.2rem">Channels</div>
+        <label style="font-weight:400;display:inline-block;margin-right:1rem"><input type="checkbox" class="ext-ch" value="news" checked style="width:auto"/> News</label>
+        <label style="font-weight:400;display:inline-block;margin-right:1rem"><input type="checkbox" class="ext-ch" value="gdelt" checked style="width:auto"/> GDELT</label>
+        <label style="font-weight:400;display:inline-block;margin-right:1rem"><input type="checkbox" class="ext-ch" value="reddit" checked style="width:auto"/> Reddit</label>
+        <label style="font-weight:400;display:inline-block;margin-right:1rem"><input type="checkbox" class="ext-ch" value="forums" style="width:auto"/> Forums</label>
+        <label style="font-weight:400;display:inline-block;margin-right:1rem"><input type="checkbox" class="ext-ch" value="ecommerce" style="width:auto"/> E-commerce</label>
+      </div>
+    </div>
+    <div class="actions" style="margin-top:.6rem">
+      <button id="run-extensive">Run extensive research</button>
+      <span id="ext-status" class="muted"></span>
+    </div>
+    <div class="note">Forums/E-commerce only run if you've added their URLs in Source plan.
+      Reddit/GDELT need network that isn't bot-blocked (works from a normal connection).</div>
+  </div>
+  <div class="card"><div class="card-head"><h2>Collect a single channel</h2>
     <span id="active-job" class="muted"></span></div>
-    <p class="muted">Scrape jobs run one at a time through a single-writer queue. Tier-2/3 are
-      not scrapers — see the Manual intel tab.</p>
     <label style="font-weight:600"><input type="checkbox" id="market-only" checked
         style="width:auto;margin-right:.4rem" />
       Restrict news to ${esc(mkt.country||'the target market')} (drop off-market items, e.g. other countries)</label>
@@ -466,7 +490,25 @@ async function viewCollect(root) {
       <div><button data-collect="${ch}">Run</button></div></div>`;
   }).join("");
   list.querySelectorAll("[data-collect]").forEach(b => b.addEventListener("click", () => runCollect(b.dataset.collect)));
+  el("run-extensive").addEventListener("click", runExtensive);
   refreshJobs();
+}
+
+async function runExtensive() {
+  const channels = [...document.querySelectorAll(".ext-ch:checked")].map(c => c.value);
+  const year = parseInt(el("ext-year").value) || new Date().getFullYear();
+  if (!channels.length) { toast("Pick at least one channel", true); return; }
+  const mo = el("market-only") ? el("market-only").checked : true;
+  el("ext-status").textContent = `Queuing ${channels.length} channel(s) for all of ${year}…`;
+  try {
+    const r = await api(`/api/projects/${State.projectId}/collect-extensive`, { method: "POST",
+      body: { channels, year, market_only: mo } });
+    toast(`Extensive research queued: ${r.jobs.map(j => j.channel).join(", ")} (${year})`);
+    el("ext-status").textContent = `Running ${channels.length} channel(s) for ${year} — monthly chunks, this can take a few minutes. Watch “Recent jobs”.`;
+    // Poll the last job so the stepper/jobs refresh as they finish.
+    r.jobs.forEach(j => pollJob(j.job_id));
+    refreshJobs();
+  } catch (e) { el("ext-status").textContent = ""; toast(e.message, true); }
 }
 
 async function runCollect(channel) {

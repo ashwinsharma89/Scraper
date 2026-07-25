@@ -85,6 +85,26 @@ def test_health_requires_auth_in_team_mode(client, monkeypatch):
     assert client.get("/api/health").status_code == 401
 
 
+def test_collect_extensive_enqueues_full_year_per_channel(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    pid = storage.create_project("P", {"source_plan": {}, "market": {"country": "Malaysia"}})
+    captured = []
+    monkeypatch.setattr("jobs.enqueue",
+                        lambda p, ch, params, triggered_by=None: (captured.append((ch, params)) or len(captured)))
+    r = client.post(f"/api/projects/{pid}/collect-extensive",
+                    json={"channels": ["news", "gdelt", "reddit"], "year": 2026, "market_only": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert [j["channel"] for j in body["jobs"]] == ["news", "gdelt", "reddit"]
+    # Each channel enqueued with full-year monthly-chunked params.
+    chans = {c for c, _ in captured}
+    assert chans == {"news", "gdelt", "reddit"}
+    for _, params in captured:
+        assert params["chunk"] == "monthly"
+        assert params["start_date"] == "2026-01-01" and params["end_date"] == "2026-12-31"
+        assert params["market_only"] is True
+
+
 def test_purge_requires_confirmation(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     pid = storage.create_project("P", {"source_plan": {}})
