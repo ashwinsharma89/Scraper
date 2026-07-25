@@ -218,6 +218,32 @@ def test_market_filter_uses_outlet_domain_when_article_unresolved():
     assert kept["extra"]["body_resolved"] is False  # honest: GN body wasn't resolved
 
 
+def test_rss_summary_used_as_first_paragraph_when_body_unextractable():
+    """Direct RSS feed: article page has no <p> body (JS-rendered), but the feed's own
+    <description> is the real lead paragraph — it becomes the stored text (not the title)."""
+    LEAD = "KUALA LUMPUR: Maggi noodles remain a staple as prices hold steady this quarter, retailers said."
+    RSS = f"""<?xml version='1.0'?><rss version='2.0'><channel><title>BH</title>
+    <item><title>Maggi stays a staple - Berita Harian</title><link>https://www.bharian.com.my/x</link>
+      <description>{LEAD}</description><pubDate>2026-03-01</pubDate></item></channel></rss>"""
+    JS_PAGE = "<html><body><div id='app'></div><script>render()</script></body></html>"  # no <p>
+
+    cfg = {"relevance_terms": ["Maggi"], "market": {"languages": ["en"]},
+           "source_plan": {"google_news_feeds": [], "rss_feeds": ["https://www.bharian.com.my/feed"]},
+           "collection_settings": {"news_chunk": "none"}}
+
+    def fetch(url):
+        if url.endswith("/feed"):
+            return _Resp(RSS)
+        return _Resp(JS_PAGE, url="https://www.bharian.com.my/x")  # real page, no extractable body
+
+    res = news.collect(cfg, {}, fetch_fn=fetch)
+    assert len(res.items) == 1
+    item = res.items[0]
+    # Stored text is the real lead paragraph from the feed, NOT the title echo.
+    assert item["text"] == LEAD
+    assert item["text"] != item["title"]
+
+
 def test_collect_keeps_relevant_drops_irrelevant():
     def fetch(url):
         if "news.google.com" in url:

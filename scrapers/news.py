@@ -389,11 +389,18 @@ def _collect_feed(url, terms, or_keywords, fetch, fetch_bodies, result, seen_lin
         from urllib.parse import urlparse
 
         summary_text = BeautifulSoup(summary or "", "html.parser").get_text(" ", strip=True)
-        text = ""
+        # Pick the richest REAL body text available. For direct RSS feeds the feed's own
+        # <description> is usually the article's lead paragraph (not a title-echo), so a
+        # substantive summary is a first-class source — this is what gives real first-
+        # paragraph text where Google News (title-echo only) cannot.
+        candidates = []
         if article_html:
-            text = relevance.first_paragraphs(article_html) or verdict["text"] or ""
-        if not text:
-            text = summary_text
+            fp = relevance.first_paragraphs(article_html)
+            if fp and len(fp) > 60:  # real <p> body; avoid nav/chrome from <p>-less pages
+                candidates.append(fp)
+        if summary_text and not summary_echoes_title(title, summary_text) and len(summary_text) > 40:
+            candidates.append(summary_text)
+        text = max(candidates, key=len) if candidates else (summary_text or verdict["text"] or "")
 
         # Market gate: keep only items with a signal they're in-market. The most
         # reliable signal is the OUTLET's own domain (e.g. nst.com.my), which the feed
