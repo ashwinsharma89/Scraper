@@ -1,11 +1,13 @@
 # Studies (portable project archives)
 
 `.mlz` files are MarketLens project archives (config + items + analysis + market intel +
-run log). Import one into a running instance:
+run log). Import one into a running instance to continue the study:
 
-    POST /api/archive/import   (multipart file upload)
+    curl -X POST http://localhost:8000/api/archive/import -F "file=@studies/<file>.mlz"
 
-or from the app once an Import button exists. See HANDOFF.md.
+- **maggi-malaysia.mlz** — Maggi / Malaysia study, market-filtered to Malaysia-only
+  (40 items, all analyzed). Cleaned of off-market (India/global) noise.
+- **maggi-malaysia-2026.mlz** — "Maggi Malaysia 2026": full-year (all of 2026),
+  monthly-chunked, market-filtered, de-duplicated Malaysia-only news (26 items).
 
-- **maggi-malaysia.mlz** — a Maggi / Malaysia news study (153 items, all analyzed),
-  reconstructed from an Excel export. Demonstrates a fully-populated study end-to-end.
+Both demonstrate a fully-populated, analyzed study end-to-end.
