@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest:*)",
+      "Bash(python app.py)",
+      "Bash(python seed_demo.py)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(pip install:*)",
+      "Bash(lsof:*)",
+      "Bash(pkill:*)"
+    ]
+  }
+}

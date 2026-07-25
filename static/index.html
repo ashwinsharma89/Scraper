@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MarketLens</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="login-overlay" class="overlay hidden">
+    <form id="login-form" class="card login-card">
+      <h2>MarketLens — Sign in</h2>
+      <p class="muted">Team mode is active. Enter your credentials.</p>
+      <label>Username <input name="username" autocomplete="username" required /></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+      <button type="submit">Sign in</button>
+      <p id="login-error" class="error"></p>
+    </form>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">MarketLens <span class="tag">market &amp; product intelligence</span></div>
+    <div class="topbar-right">
+      <select id="project-select" title="Active project"></select>
+      <button id="new-project-btn" class="ghost">+ New study</button>
+      <span id="user-chip" class="chip hidden"></span>
+      <button id="logout-btn" class="ghost hidden">Sign out</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-view="overview" class="active">Overview</button>
+    <button data-view="sources">Source plan</button>
+    <button data-view="collect">Collect</button>
+    <button data-view="runlog">Run log</button>
+    <button data-view="items">Items</button>
+    <button data-view="analysis">Analysis</button>
+    <button data-view="intel">Market intel</button>
+    <button data-view="manual">Manual intel</button>
+    <button data-view="schedules">Schedules</button>
+    <button data-view="export">Export &amp; report</button>
+  </nav>
+
+  <main id="main">
+    <div id="workflow" class="workflow hidden"></div>
+    <div id="empty-state" class="card">
+      <h2>Welcome to MarketLens</h2>
+      <p>Create a study to begin. Nothing here is hard-coded to any brand, category, or
+         market — every value comes from the intake wizard.</p>
+      <p class="muted">MarketLens works in four steps, always in this order:
+         <b>1) Configure → 2) Collect → 3) Analyze → 4) Export.</b>
+         Filling the source plan only says <i>where</i> to look; you still have to run
+         Collect and Analyze before a report has anything in it.</p>
+      <button id="empty-new-btn">+ Create your first study</button>
+    </div>
+  </main>
+
+  <!-- Wizard modal -->
+  <div id="wizard-modal" class="overlay hidden">
+    <div class="card wizard-card">
+      <div class="card-head"><h2>New study — intake wizard</h2><button class="x" data-close>×</button></div>
+      <form id="wizard-form">
+        <fieldset><legend>Market</legend>
+          <label>Country / region <input name="country" placeholder="e.g. Singapore" required /></label>
+          <label>Target languages (comma-separated ISO codes)
+            <input name="languages" placeholder="e.g. en, zh, ms, ta" required /></label>
+        </fieldset>
+        <fieldset><legend>Product</legend>
+          <label>Brand name <input name="brand" placeholder="e.g. Acme Cola" required /></label>
+          <label>Parent company (optional) <input name="parent_company" /></label>
+          <label>Category (free text) <input name="category" placeholder="e.g. carbonated soft drinks" /></label>
+          <label>Category type
+            <select name="category_type">
+              <option value="fmcg_food">FMCG / food</option>
+              <option value="consumer_electronics">Consumer electronics</option>
+              <option value="fashion">Fashion</option>
+              <option value="services">Services</option>
+              <option value="b2b_industrial">B2B / industrial</option>
+              <option value="other">Other</option>
+            </select></label>
+        </fieldset>
+        <fieldset><legend>Competitors</legend>
+          <label>Competitor brands (comma-separated)
+            <input name="competitors" placeholder="e.g. Fizzly, PopMax" /></label>
+        </fieldset>
+        <fieldset><legend>Trend / issue terms</legend>
+          <label>Trend terms (comma-separated) — seed the trend taxonomy
+            <input name="trend_terms" placeholder="e.g. sugar-free, sustainability, local flavor" /></label>
+          <p class="muted">Native-language keyword slots (brand, brand+price, category-generic,
+            brand+complaint) are scaffolded per language after creation — fill them in the
+            Source plan tab. Nothing is pre-filled with any real third-party brand.</p>
+        </fieldset>
+        <div class="actions">
+          <button type="submit">Create study</button>
+          <button type="button" class="ghost" data-close>Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span id="version-stamp">MarketLens</span>
+    <span class="muted">Decision-grade · honest feasibility · precision over volume</span>
+  </footer>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

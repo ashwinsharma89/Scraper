@@ -1,0 +1,30 @@
+# One-command setup:  docker compose up
+# A colleague installs Docker, gets this file + the repo, runs `docker compose up`,
+# and opens http://localhost:8000. Data persists in the named volume `marketlens_data`.
+services:
+  marketlens:
+    build: .
+    image: marketlens:latest
+    ports:
+      - "8000:8000"
+    environment:
+      # Default to solo (no auth). For a shared server, set MODE=team and provide
+      # ADMIN_PASSWORD + SESSION_SECRET (see .env.example), then re-run.
+      MODE: ${MODE:-solo}
+      HOST: 0.0.0.0
+      PORT: 8000
+      MARKETLENS_DATA_DIR: /data
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
+      TWITTER_API_KEY: ${TWITTER_API_KEY:-}
+      ANALYSIS_MODEL: ${ANALYSIS_MODEL:-claude-haiku-4-5}
+    volumes:
+      - marketlens_data:/data
+    restart: unless-stopped
+
+volumes:
+  marketlens_data:

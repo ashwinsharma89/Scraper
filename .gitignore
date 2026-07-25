@@ -1,0 +1,21 @@
+# Secrets & local state — never commit
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# stray logs
+*.log
