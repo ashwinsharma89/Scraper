@@ -53,14 +53,59 @@ def mine_review_json(payload: Any, out: List[str], depth: int = 0) -> None:
             mine_review_json(item, out, depth + 1)
 
 
+def build_search_urls(templates, keywords) -> List[str]:
+    """Turn search-URL *templates* (containing a ``{q}`` placeholder) + keywords into
+    concrete search URLs. A template with no ``{q}`` is treated as a direct URL. This is
+    what lets a study collect by keyword ("maggi") on a marketplace without pasting a URL
+    per product — the URL varies, the template + keyword don't.
+    """
+    from urllib.parse import quote_plus
+
+    urls: List[str] = []
+    for tmpl in templates or []:
+        tmpl = (tmpl or "").strip()
+        if not tmpl:
+            continue
+        if "{q}" not in tmpl:
+            urls.append(tmpl)
+            continue
+        for kw in keywords or []:
+            kw = (kw or "").strip()
+            if kw:
+                urls.append(tmpl.replace("{q}", quote_plus(kw)))
+    # De-dup, preserve order.
+    seen, out = set(), []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
 def collect(cfg: Dict[str, Any], params: Optional[Dict[str, Any]] = None) -> ScrapeResult:
-    """params: urls (override), proxy (per-run), timeout_ms, headless."""
+    """params: urls (override), search_templates, keywords, proxy, timeout_ms, headless."""
+    from scrapers.base import relevance_terms
+
     params = params or {}
     result = ScrapeResult(CHANNEL)
+    sp = cfg.get("source_plan", {})
 
-    urls = params.get("urls") or cfg.get("source_plan", {}).get("ecommerce_urls", [])
+    # 1) Explicit product/category/search URLs (Source plan → E-commerce URLs).
+    urls = list(params.get("urls") or sp.get("ecommerce_urls", []) or [])
+    # 2) Keyword-driven: search-URL templates × keywords (URL varies, template doesn't).
+    templates = params.get("search_templates") or sp.get("ecommerce_search", []) or []
+    keywords = params.get("keywords") or sp.get("ecommerce_keywords") or relevance_terms(cfg)
+    urls += build_search_urls(templates, keywords)
+    # De-dup across both sources.
+    seen, deduped = set(), []
+    for u in urls:
+        if u and u not in seen:
+            seen.add(u); deduped.append(u)
+    urls = deduped
+
     if not urls:
-        result.error("No e-commerce URLs configured — add product/category/search URLs.")
+        result.error("No e-commerce sources configured — add product/search URLs, or a search-URL "
+                     "template with {q} plus keywords, in Source plan.")
         return result
 
     try:

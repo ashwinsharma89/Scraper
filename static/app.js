@@ -284,9 +284,14 @@ function viewSources(root) {
     <label>Market terms (comma-separated) <span class="muted">country name matches its demonym automatically</span>
       <input id="market-terms" value="${esc((mkt.market_terms||[]).join(', '))}" placeholder="e.g. Malaysia, Kuala Lumpur, KL, Selangor, Penang, Johor" /></label>
     <hr style="border:none;border-top:1px solid var(--border);margin:.8rem 0" />
-    <p class="muted">One URL/value per line. Empty slots are for your local knowledge.</p>
+    <div class="note">📎 <b>Add sources here — one per line.</b> URLs vary per study and are never
+      fixed in the tool; this is where every channel's links live. Prefer keyword-search where
+      URLs change constantly (e.g. e-commerce): give a <b>template with <code>{q}</code></b> +
+      keywords instead of pasting a URL per product. Use ✨ Suggest sources to auto-propose &amp; validate.</div>
     ${listEditor("rss_feeds", "Direct RSS feeds", "(feed-health-checked)")}
-    ${listEditor("ecommerce_urls", "E-commerce product/category/search URLs", "")}
+    ${listEditor("ecommerce_urls", "E-commerce — explicit product/category/search URLs", "")}
+    ${listEditor("ecommerce_search", "E-commerce — search-URL templates", "use {q} for the keyword, e.g. https://shopee.com.my/search?keyword={q}")}
+    ${listEditor("ecommerce_keywords", "E-commerce — keywords for the templates above", "defaults to relevance terms if empty")}
     ${listEditor("forum_urls", "Forum thread/listing URLs", "")}
     ${listEditor("quora_topics", "Quora question URLs", "")}
     ${listEditor("subreddits", "Subreddits (confirm candidates)", "")}

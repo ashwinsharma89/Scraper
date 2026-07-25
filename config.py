@@ -291,7 +291,10 @@ def run_wizard(intake: Dict[str, Any]) -> Dict[str, Any]:
                   "needs_confirmation": country_info.get("needs_confirmation", "false")},
         "subreddits": suggest_subreddits(country_info["name"], category_type),
         "rss_feeds": [],           # user fills from local knowledge; feed-health-checked
-        "ecommerce_urls": [],      # user fills: product/category/search URLs
+        "ecommerce_urls": [],      # user fills: explicit product/category/search URLs
+        "ecommerce_search": [],    # user fills: search-URL templates with {q}, e.g.
+                                   #   https://shopee.com.my/search?keyword={q}
+        "ecommerce_keywords": [],  # keywords for the templates; defaults to relevance terms
         "forum_urls": [],          # user fills: thread/listing URLs
         "quora_topics": [],        # user fills
         "youtube": {"region_code": iso, "relevance_language": languages[0] if languages else "en"},
