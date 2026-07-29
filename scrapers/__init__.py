@@ -31,19 +31,21 @@ CHANNEL_INFO: Dict[str, Dict[str, str]] = {
                   "limitation": "ToS gray zone; internal research, low volume, read-only; proxy "
                                 "recommended beyond light use. No historical backfill."},
     "news": {"tier": "1", "name": "News / RSS",
-             "method": "Regular RSS + Google News search feeds with monthly/weekly chunking, "
-                       "OR keyword filter, strict body-content relevance validation, and a "
-                       "market gate that keeps only in-market outlets (by domain ccTLD / market "
-                       "terms + demonym) so a Malaysia study isn't flooded with e.g. Indian "
-                       "coverage. Google News items with no literal keyword match anywhere on "
-                       "the page (not even boilerplate) are kept, not dropped, and left for "
-                       "Claude's brand_focus tag to confirm during Analyze — catches paraphrased "
-                       "mentions a keyword-only check would miss (confirmed footer-only/junk "
-                       "matches are still always dropped at collection).",
+             "method": "Regular RSS + Google News (chunkable, date-scoped) + Bing News (a second, "
+                       "independent index, no date-chunking) search feeds, with OR keyword filter, "
+                       "strict body-content relevance validation, and a market gate that keeps only "
+                       "in-market outlets (by domain ccTLD / market terms + demonym) so a Malaysia "
+                       "study isn't flooded with e.g. Indian coverage. Query-scoped items (Google or "
+                       "Bing News) with no literal keyword match anywhere on the page (not even "
+                       "boilerplate) are kept, not dropped, and left for Claude's brand_focus tag to "
+                       "confirm during Analyze — catches paraphrased mentions a keyword-only check "
+                       "would miss (confirmed footer-only/junk matches are still always dropped).",
              "limitation": "Regular RSS cannot reach back in time; only chunked Google News and "
-                           "GDELT can. Google News obfuscates article URLs, so its item text is the "
-                           "feed summary (title-level) — add direct publisher RSS feeds for full "
-                           "first-paragraph body text."},
+                           "GDELT can — Bing News has no date-range operator either, so it runs once "
+                           "per collection, not chunked. Google News obfuscates article URLs, so its "
+                           "item text is the feed summary (title-level); Bing News links are a normal "
+                           "resolvable redirect so its text can include the real first paragraph — "
+                           "add direct publisher RSS feeds for the fullest body text either way."},
     "gdelt": {"tier": "1", "name": "GDELT (DOC 2.0)",
               "method": "sourcecountry from config, monthly chunking, 250 records/chunk.",
               "limitation": "Metadata only (title/link/date/outlet/language) — no article body."},

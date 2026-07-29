@@ -218,6 +218,75 @@ def test_market_filter_can_be_disabled():
     assert "Pahari Maggi conquers Indian hills" in titles  # kept when filter off
 
 
+def test_bing_news_feed_flows_through_same_pipeline():
+    """Bing News items must get relevance validation, market filtering, first-paragraph
+    text, and engine provenance — the same pipeline as Google News, not a separate path."""
+    BING_RSS = """<?xml version='1.0'?><rss version='2.0'><channel><title>Bing</title>
+    <item><title>Maggi backs Malaysian women entrepreneurs</title>
+      <link>http://www.bing.com/news/apiclick.aspx?url=https%3a%2f%2fwww.nst.com.my%2fx</link>
+      <description>Maggi backs Malaysian women entrepreneurs</description>
+      <pubDate>2026-03-01</pubDate></item>
+    <item><title>Unrelated sports headline</title>
+      <link>http://www.bing.com/news/apiclick.aspx?url=https%3a%2f%2fsome-sports-site.com%2fy</link>
+      <description>Unrelated sports headline</description><pubDate>2026-03-02</pubDate></item>
+    </channel></rss>"""
+    ART_MY = ("<html><body><article><h1>Maggi backs Malaysian women</h1>"
+             "<p>The KEMAS-backed programme ran across Malaysia this quarter, organisers said.</p>"
+             "</article></body></html>")
+
+    def fetch(url):
+        if "bing.com/news/search" in url:
+            return _Resp(BING_RSS)
+        if "url=https%3a%2f%2fwww.nst.com.my" in url:
+            # Simulate the normal HTTP redirect Bing performs (verified live: it's a
+            # plain redirect, not an obfuscated token like Google News).
+            return _Resp(ART_MY, url="https://www.nst.com.my/x")
+        if "url=https%3a%2f%2fsome-sports-site.com" in url:
+            return _Resp("<html><body><article><h1>Unrelated sports headline</h1>"
+                        "<p>A local team won its match yesterday.</p></article></body></html>",
+                        url="https://some-sports-site.com/y")
+        return _Resp("", status=404)
+
+    cfg = {
+        "relevance_terms": ["Maggi"],
+        "market": {"country": "Malaysia", "country_code": "MY", "cctld": ".my",
+                  "market_terms": ["Malaysia", "Malaysian"], "languages": ["en"]},
+        "source_plan": {"google_news_feeds": [], "rss_feeds": [],
+            "bing_news_feeds": [{"language": "en", "structure": "brand",
+                "url": "https://www.bing.com/news/search?q=Maggi&format=RSS"}]},
+        "collection_settings": {"news_chunk": "none", "market_filter": True},
+    }
+    res = news.collect(cfg, {"start_date": "2026-03-01", "end_date": "2026-03-31"}, fetch_fn=fetch)
+    titles = [i["title"] for i in res.items]
+    assert "Maggi backs Malaysian women entrepreneurs" in titles  # relevant, kept
+    assert "Unrelated sports headline" not in titles              # irrelevant, dropped
+
+    kept = res.items[0]
+    assert kept["extra"]["engine"] == "bing_news"       # accurate provenance
+    assert kept["extra"]["is_google_news"] is True       # query-scoped semantics reused
+    assert "KEMAS" in kept["text"]                       # real first-paragraph text
+    assert kept["link"] == "https://www.nst.com.my/x"    # redirect resolved to the real article
+
+
+def test_bing_news_can_be_disabled():
+    def fetch(url):
+        return _Resp("<rss/>")  # would error if actually called
+    called = {"bing": False}
+
+    def tracking_fetch(url):
+        if "bing.com" in url:
+            called["bing"] = True
+        return _Resp("<rss version='2.0'><channel></channel></rss>")
+
+    cfg = {"relevance_terms": ["Maggi"], "market": {"languages": ["en"]},
+           "source_plan": {"google_news_feeds": [], "rss_feeds": [],
+               "bing_news_feeds": [{"language": "en", "structure": "brand",
+                   "url": "https://www.bing.com/news/search?q=Maggi&format=RSS"}]},
+           "collection_settings": {"news_chunk": "none"}}
+    news.collect(cfg, {"bing_news": False}, fetch_fn=tracking_fetch)
+    assert called["bing"] is False
+
+
 def test_google_news_paraphrased_mention_is_stored_not_dropped():
     """Structural gap #3 fix: a Google News item whose title/body never literally says
     the brand ("Maggi") but is clearly a paraphrased mention ("instant noodle price

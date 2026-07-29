@@ -163,6 +163,59 @@ def build_google_news_feeds(
 
 
 # --------------------------------------------------------------------------- #
+# Bing News search-feed URL builder — a SECOND, independent index
+# --------------------------------------------------------------------------- #
+# Structural gap: relying on Google News alone means anything GN's index misses is
+# invisible to the tool. Bing News RSS needs no API key, is a genuinely different
+# crawl/index (catches sources GN missed), and — unlike Google News — its outbound
+# links are a normal, resolvable HTTP redirect chain (the destination is a plain query
+# param), so the existing article-body/first-paragraph/market-filter machinery works on
+# it with no special-casing. Trade-off: Bing News search has no public date-range
+# operator, so unlike Google News it cannot be month-chunked for "full year" runs — it
+# returns whatever it currently has indexed as most relevant, once per collection.
+def build_bing_news_url(query_terms: List[str], market: str = "") -> str:
+    """Build a Bing News RSS search URL. ``market`` is Bing's market code (e.g. 'en-MY')."""
+    parts: List[str] = []
+    for t in query_terms:
+        t = (t or "").strip()
+        if not t:
+            continue
+        parts.append(f'"{t}"' if " " in t else t)
+    query = " OR ".join(parts) if parts else ""
+    q = urllib.parse.quote_plus(query)
+    url = f"https://www.bing.com/news/search?q={q}&format=RSS"
+    if market:
+        url += f"&setmkt={urllib.parse.quote_plus(market)}"
+    return url
+
+
+def build_bing_news_feeds(
+    keywords_by_language: Dict[str, Dict[str, List[str]]],
+    languages: List[str],
+    country_iso: str,
+) -> List[Dict[str, str]]:
+    """One feed per (language, keyword-structure) that has terms — mirrors
+    build_google_news_feeds so both indexes get the same keyword coverage."""
+    feeds: List[Dict[str, str]] = []
+    for lang in languages:
+        lang_kw = keywords_by_language.get(lang, {})
+        for structure, terms in lang_kw.items():
+            terms = [t for t in (terms or []) if t and t.strip()]
+            if not terms:
+                continue
+            market = f"{lang}-{country_iso.upper()}" if country_iso else lang
+            feeds.append(
+                {
+                    "language": lang,
+                    "structure": structure,
+                    "query": " OR ".join(terms),
+                    "url": build_bing_news_url(terms, market),
+                }
+            )
+    return feeds
+
+
+# --------------------------------------------------------------------------- #
 # Subreddit / segment suggestions
 # --------------------------------------------------------------------------- #
 def suggest_subreddits(country_name: str, category_type: str) -> List[str]:
@@ -293,6 +346,10 @@ def run_wizard(intake: Dict[str, Any]) -> Dict[str, Any]:
 
     source_plan = {
         "google_news_feeds": build_google_news_feeds(by_language, languages, iso),
+        # A second, independent index — catches sources Google News's index missed.
+        # No date-chunking support (see build_bing_news_feeds docstring), so it
+        # complements rather than replaces the chunkable Google News channel.
+        "bing_news_feeds": build_bing_news_feeds(by_language, languages, iso),
         "gdelt": {"sourcecountry": country_info.get("gdelt", ""),
                   "needs_confirmation": country_info.get("needs_confirmation", "false")},
         "subreddits": suggest_subreddits(country_info["name"], category_type),

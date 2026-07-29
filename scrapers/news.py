@@ -313,7 +313,22 @@ def collect(
         except Exception as exc:
             result.error(f"Google News feed failed ({feed.get('language')}/{feed.get('structure')}): {exc}")
 
-    # 2) Regular RSS feeds (no time travel; current window only). These are already the
+    # 2) Bing News search feeds — a SECOND, independent index (catches sources Google
+    # News's crawl missed). No date-range operator support, so this runs once per feed
+    # rather than chunked; still fully market-filtered, relevance-validated, and
+    # participates in the same dedup/clustering as everything else.
+    if params.get("bing_news", True):
+        for feed in plan.get("bing_news_feeds", []):
+            base_url = feed.get("url")
+            if not base_url:
+                continue
+            try:
+                _collect_feed(base_url, terms, or_keywords, fetch, fetch_bodies, result, seen_links,
+                              is_google_news=True, feed_meta=feed, mkt=mkt, engine="bing_news")
+            except Exception as exc:
+                result.error(f"Bing News feed failed ({feed.get('language')}/{feed.get('structure')}): {exc}")
+
+    # 3) Regular RSS feeds (no time travel; current window only). These are already the
     # publisher's own feed, so market gating is skipped (the outlet IS the market signal).
     for rss_url in plan.get("rss_feeds", []):
         try:
@@ -332,8 +347,13 @@ def collect(
 
 
 def _collect_feed(url, terms, or_keywords, fetch, fetch_bodies, result, seen_links,
-                  *, is_google_news, feed_meta, mkt=None):
+                  *, is_google_news, feed_meta, mkt=None, engine=None):
     mkt = mkt or {"only": False, "terms": [], "cctld": ""}
+    # is_google_news controls "query-scoped feed" behavior (semantic backstop instead of
+    # hard-drop, always-fetch-body) — Bing News feeds are ALSO query-scoped and share
+    # that behavior, so they pass is_google_news=True too. `engine` is the accurate,
+    # separate provenance tag stored on each item so exports/audits can tell them apart.
+    engine = engine or ("google_news" if is_google_news else "rss")
     resp = fetch(url)
     status = getattr(resp, "status_code", 200)
     health = {"url": url, "status": status, "entries": 0, "kept": 0}
@@ -442,6 +462,7 @@ def _collect_feed(url, terms, or_keywords, fetch, fetch_bodies, result, seen_lin
                 "extra": {
                     "feed_url": url,
                     "is_google_news": is_google_news,
+                    "engine": engine,  # "google_news" | "bing_news" | "rss"
                     "matched_in": verdict["matched_in"],
                     "language": feed_meta.get("language"),
                     "outlet": entry.get("source", "") or outlet_domain or domain,

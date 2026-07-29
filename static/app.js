@@ -301,8 +301,17 @@ function viewSources(root) {
     <div id="feed-results"></div>
   </div>
   <div class="card"><h3>Google News feeds (generated)</h3>
+    <p class="muted">Chunkable by date — used for full-year extensive research.</p>
     <div class="table-wrap"><table><thead><tr><th>Lang</th><th>Structure</th><th>Query</th></tr></thead>
     <tbody>${(sp.google_news_feeds||[]).map(f =>
+      `<tr><td>${esc(f.language)}</td><td>${esc(f.structure)}</td><td>${esc(f.query)}</td></tr>`).join("") ||
+      `<tr><td colspan="3" class="muted">No feeds — add native-language keyword terms below.</td></tr>`}</tbody></table></div>
+  </div>
+  <div class="card"><h3>Bing News feeds (generated)</h3>
+    <p class="muted">A second, independent index — catches sources Google News's crawl missed.
+      No date-range support, so this runs once per collection (not chunked).</p>
+    <div class="table-wrap"><table><thead><tr><th>Lang</th><th>Structure</th><th>Query</th></tr></thead>
+    <tbody>${(sp.bing_news_feeds||[]).map(f =>
       `<tr><td>${esc(f.language)}</td><td>${esc(f.structure)}</td><td>${esc(f.query)}</td></tr>`).join("") ||
       `<tr><td colspan="3" class="muted">No feeds — add native-language keyword terms below.</td></tr>`}</tbody></table></div>
   </div>
@@ -454,7 +463,7 @@ async function viewCollect(root) {
       <label style="flex:0 0 120px">Year <input id="ext-year" type="number" value="${yr}" min="2015" max="${yr}" /></label>
       <div style="flex:1">
         <div style="font-weight:600;font-size:13px;margin-bottom:.2rem">Channels</div>
-        <label style="font-weight:400;display:inline-block;margin-right:1rem"><input type="checkbox" class="ext-ch" value="news" checked style="width:auto"/> News</label>
+        <label style="font-weight:400;display:inline-block;margin-right:1rem"><input type="checkbox" class="ext-ch" value="news" checked style="width:auto"/> News (Google + Bing)</label>
         <label style="font-weight:400;display:inline-block;margin-right:1rem"><input type="checkbox" class="ext-ch" value="gdelt" checked style="width:auto"/> GDELT</label>
         <label style="font-weight:400;display:inline-block;margin-right:1rem"><input type="checkbox" class="ext-ch" value="reddit" checked style="width:auto"/> Reddit</label>
         <label style="font-weight:400;display:inline-block;margin-right:1rem"><input type="checkbox" class="ext-ch" value="forums" style="width:auto"/> Forums</label>

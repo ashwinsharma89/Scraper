@@ -77,6 +77,32 @@ def test_wizard_unknown_country_market_terms_dont_crash():
     assert cfg["market"]["market_terms"] == ["Atlantis"]  # no fabricated demonym
 
 
+def test_bing_news_url_builder():
+    url = config.build_bing_news_url(["Acme Cola", "cola price"], "en-SG")
+    parsed, qs = _parse_qs(url)
+    assert parsed.netloc == "www.bing.com"
+    assert parsed.path == "/news/search"
+    assert qs["format"] == ["RSS"]
+    assert qs["q"] == ['"Acme Cola" OR "cola price"']
+    assert qs["setmkt"] == ["en-SG"]
+
+
+def test_wizard_generates_both_google_and_bing_feeds():
+    """Structural gap #4: relying on Google News alone means anything its index missed
+    is invisible. Bing News is a second, independent, no-API-key index — the wizard
+    must generate it alongside Google News automatically, not as a manual add-on."""
+    cfg = config.run_wizard({
+        "market": {"country": "Malaysia", "languages": ["en"]},
+        "product": {"brand": "Maggi", "category": "instant noodles", "category_type": "fmcg_food"},
+        "competitors": [],
+    })
+    gn = cfg["source_plan"]["google_news_feeds"]
+    bing = cfg["source_plan"]["bing_news_feeds"]
+    assert len(gn) > 0 and len(bing) > 0
+    assert len(gn) == len(bing)  # same keyword-structure coverage on both indexes
+    assert all(f["url"].startswith("https://www.bing.com/news/search?") for f in bing)
+
+
 def test_wizard_end_to_end_no_hardcoded_brand():
     intake = {
         "market": {"country": "Singapore", "languages": ["en", "zh"]},
