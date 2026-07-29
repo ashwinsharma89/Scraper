@@ -33,7 +33,7 @@ context. Read `README.md` for the product overview; this file is the *engineerin
 cd /Users/ashwin/Desktop/marketlens
 source .venv/bin/activate              # venv already exists (Python 3.13)
 python app.py                          # http://localhost:8000
-python -m pytest -q                    # 69 tests, all should pass, ~1s (network mocked)
+python -m pytest -q                    # 102 tests, all should pass, ~1s (network mocked)
 python seed_demo.py                    # (re)create the Acme Cola / Singapore demo project
 ```
 
@@ -45,8 +45,8 @@ Docker path also works: `docker compose up`. Non-Docker setup scripts: `setup.sh
 |---|---|
 | `app.py` | FastAPI routes + static SPA mount + startup (migrations, admin bootstrap, scheduler) |
 | `settings.py` | Env-derived config. **Note:** empty `HOST=`/`PORT=` fall back to defaults |
-| `config.py` | Intake **wizard** + source-plan generation + Google News URL builder + `feed_health_check` + country table |
-| `storage.py` | Persistence, **dedup** (content_hash, project-scoped), lineage, audit log, users |
+| `config.py` | Intake **wizard** + source-plan generation + Google News **and Bing News** URL builders + `feed_health_check` + country table (incl. **demonyms**) |
+| `storage.py` | Persistence, **dedup** (content_hash, project-scoped), **near-duplicate/syndication clustering** (`cluster_id`), lineage, audit log, users |
 | `migrations.py` | Idempotent `PRAGMA user_version` migrations (append-only) |
 | `http_client.py` | One retrying session + per-domain rate limiting |
 | `jobs.py` | **Single-writer job queue** + `run_collection` (the runner wrapping start_run/save_items/finish_run) |
@@ -86,21 +86,47 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 - SPA: 4-step workflow stepper, per-tab help, key-detection chips, **Items browser** (filter
   by channel/brand_focus/sentiment/search), Collect market toggle.
 - Demo: `seed_demo.py` (Acme Cola / Singapore — fictional, no fabricated data).
+- **Four structural gaps closed** (a dedicated session pass — see §11 for design rationale
+  on each; all live-verified against real Malaysia/Maggi data, not just unit tests):
+  1. **Near-duplicate/syndicated-story clustering** (`cluster_id`) — wire stories reprinted
+     across outlets no longer inflate sentiment n-size; `total_stories` vs `total_items` in
+     every dashboard/export, nothing ever deleted.
+  2. **Market-filter demonym false-negatives** — country reference table now has real
+     demonyms (France→French, not just substring luck like Malaysia→Malaysian); wizard
+     auto-populates `market_terms` with both.
+  3. **Semantic relevance backstop** — Google/Bing News items with NO literal keyword match
+     anywhere on the page (not just boilerplate) are stored, not dropped, and Claude's
+     existing `brand_focus` tag makes the final call during Analyze (excluded from headline
+     stats until then via `analytics._analyzed_rows(exclude_unrelated=True)`). Confirmed
+     footer-only/junk matches are still always hard-dropped — this distinction
+     (`relevance.term_appears_anywhere`) is the crux of the fix; get it wrong and you
+     regress the tool's core "footer mention ≠ relevant" guarantee.
+  4. **Bing News as a second, independent index** — no API key, its redirect resolves via a
+     normal HTTP chain (unlike Google's encrypted token) so it can carry real first-
+     paragraph text; wizard generates it alongside Google News automatically; no date-range
+     support so it runs once per collection, not chunked.
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
-- **Google News article bodies are unresolvable.** GN wraps article URLs in an encrypted
-  token; base64-decode + redirect-follow both fail (tested live). So news `text` from GN is
-  the title-level summary; `extra.body_resolved=false` flags this. **Real fix = direct
-  publisher RSS feeds** (real article URLs → real first paragraphs). Do not build a fragile
-  GN de-obfuscator.
-- **Market filter is strict** — drops items with no in-market signal; can over-drop
-  (neutral-titled local articles from unknown-ccTLD outlets). It's toggleable (`market_only`)
-  and editable (`market_terms`). Tune, don't remove the honesty.
+- **Google News article bodies are still unresolvable** (encrypted URL token; base64-decode
+  + redirect-follow both fail, tested live) — `text` stays title-level, `extra.body_resolved=
+  false` flags it. **Mitigated, not eliminated**, by direct publisher RSS feeds AND the new
+  Bing News channel (§5.4) — both give real first-paragraph text. Do not build a GN
+  de-obfuscator.
+- **Market filter is strict by design** — drops items with no in-market signal; can still
+  over-drop (neutral-titled local articles from an unknown-ccTLD outlet using neither the
+  country name nor its demonym). Toggleable (`market_only`) and editable (`market_terms`,
+  now demonym-aware — §5.2). Tune, don't remove the honesty.
 - **Reddit/GDELT** get 403/429 from some IPs (incl. this dev sandbox) — handled as honest
   partial failures. Works better from a residential IP.
+- **GDELT's own server-side relevance matching is loose/unreliable** — it can return country
+  news totally unrelated to the query (a real live bug caught this session: 175 of 202
+  "results" were noise). `scrapers/gdelt.py` now re-validates each title against relevance
+  terms before storing (`irrelevant_dropped` diagnostic) — but expect GDELT's real yield for
+  a narrow brand+country query to be small; it's a broad event index, not a brand-review
+  source.
 - **Quick-commerce & most social** are app-only / anti-automation → **documented Tier-3
-  gaps**, never scrapers. Keep it that way.
+  gaps**, never scrapers. Keep it that way — this is NOT one of the "structural gaps" to fix.
 - E-commerce needs `python -m playwright install chromium` (baked into the Docker image).
 - Report export is `.md` + `.docx` only (no PDF yet).
 
@@ -112,12 +138,16 @@ Offered to the user but not yet built (in rough priority order):
 3. **Edit-study-settings form** (change market/brand/competitors and regenerate the source
    plan in place — today the market is only set at wizard time).
 4. **Delete-study button** in the UI (backend `DELETE /api/projects/{id}?confirm=DELETE` exists).
-5. **"target brand only" export filter** (drop `brand_focus=unrelated` rows).
-6. **Auto-suggest city/region market terms** to reduce market-filter over-drop.
+5. **"target brand only" export filter** (drop `brand_focus=unrelated` rows) — partially
+   superseded now: headline aggregates already exclude `unrelated` by default (§5.3); this
+   would just add an explicit toggle for the raw data tabs too.
+6. **Auto-suggest city/region market terms** to further reduce market-filter over-drop
+   (demonyms are now automatic — §5.2 — but city/region-level terms still require the user
+   to add them manually in Source plan, or come via ✨ Suggest sources).
 7. **PDF report export**; **per-tab description headers** in the Excel (self-documenting).
-8. Optional: **Playwright-based News body fetch** (heavier) to get first paragraphs from GN —
-   only if genuinely reliable; otherwise keep steering users to RSS.
-9. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set.
+8. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set.
+9. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
+   (currently API + Excel Confidence tab only, no dedicated frontend chart yet).
 
 ## 8. Gotchas discovered this session (save yourself the debugging)
 
@@ -158,6 +188,11 @@ Offered to the user but not yet built (in rough priority order):
 - `market_intel(entry_type='cited'|'manual_ad', category, metric, value, source_name,
   source_url, publication_date, accessed_date, confidence, notes, extra_json, entered_by)`.
 - `schedules`, `users`, `audit_log`.
+- `items.cluster_id` (migration 002) — nullable INTEGER, near-duplicate/syndication group.
+  **Legacy rows (pre-migration) have `cluster_id=NULL`** — always read via
+  `COALESCE(cluster_id, id)`, never bare `cluster_id`, or you'll silently undercount (SQL
+  `COUNT(DISTINCT x)` ignores NULLs entirely). `storage.count_unique_stories`/`cluster_sizes`
+  already do this correctly; if you add a new query touching `cluster_id`, do too.
 
 ## 11. Design decisions & rationale (the non-obvious "why")
 
@@ -180,6 +215,29 @@ Offered to the user but not yet built (in rough priority order):
 - **AI source discovery suggests, the tool validates.** LLMs know outlets but hallucinate RSS
   paths — so guessed feeds are health-checked and, if dead, the real feed is auto-discovered
   from the homepage `<link rel="alternate">`. Nothing dead/fake is auto-added.
+- **Clustering never deletes or merges rows** — `cluster_id` groups near-duplicate titles
+  (similarity + tight date window) purely for *counting*; `total_items` (raw) and
+  `total_stories` (syndication-adjusted) are both always reported, never one silently
+  swapped for the other. A recurring PR headline a year apart ("Cooking Competition
+  Returns") must NOT cluster — the date window is what prevents that false merge; don't
+  widen it carelessly.
+- **Demonyms are an explicit table field, not derived.** `"Malaysia" ⊂ "Malaysian"` worked by
+  substring luck; `"France" ⊄ "French"` doesn't. Never assume a demonym can be computed from
+  the country name — always look it up.
+- **The semantic-relevance backstop only applies to QUERY-SCOPED feeds** (Google/Bing News,
+  `is_google_news=True` — the flag now means "keyword-scoped feed," not literally "is this
+  Google"), never to raw RSS (an unscoped full firehose with no volume bound at all if
+  relaxed). And it only fires when the term is absent from the ENTIRE page — if it's present
+  ONLY in stripped boilerplate (`relevance.term_appears_anywhere` says yes but
+  `contains_any_term` on the stripped body says no), that's CONFIRMED junk and still hard-
+  drops. Conflating these two "relevant=False" cases was a real regression caught by the
+  pre-existing footer-junk test this session — if you touch this logic, run
+  `tests/test_relevance.py` and `tests/test_news.py` together.
+- **Bing News's redirect is a normal HTTP chain** (`apiclick.aspx?...&url=<real-dest>`),
+  unlike Google News's encrypted opaque token — `resolve_and_fetch()` needed ZERO special-
+  casing for it, the existing non-Google branch (plain `fetch()` + follow redirects) already
+  handles it. This is why Bing can carry real first-paragraph text where Google News cannot.
+  No date-range operator though, so it's collected once per run, not month-chunked.
 
 ## 12. API keys — which channel needs what
 
@@ -204,7 +262,20 @@ you add URLs). E-commerce needs the Playwright browser.
     in-app **Items browser** and the combined **"All Items"** tab were added for this.
   - Wanted **geography-correct results** (Malaysia not India) → market filter.
   - Wanted the tool to **auto-populate sources** → AI source discovery.
+  - Asked "is this enterprise grade?" meaning **data quality/completeness**, not
+    infra/compliance — led to a full pass identifying and fixing 4 structural gaps
+    (clustering, demonyms, semantic relevance, second news index — see §5.4/§11). The user
+    explicitly chose the bigger-but-correct architecture option for the relevance fix
+    (folded into existing Analyze, no extra API calls) over a cheaper opt-in-cost option —
+    they lean toward "do it right" over "do it cheap" when asked directly.
+  - Their Malaysia study's item count went 7 → 39 → 40 (cleaned) → 187 (enriched, but noisy
+    — later found to include 175 GDELT junk items) → 27 (GDELT-noise removed) over the
+    course of debugging. **If total_items looks suspiciously large or small, check
+    `relevance_recovery_stats()` and `cluster_sizes()` before assuming the number is real.**
 - Implication: favor **guided, self-explanatory UX and honest status** over raw features.
   When something can't be done reliably (GN bodies, app-only platforms), say so in the UI
-  rather than silently degrading.
+  rather than silently degrading. When the user flags a data-quality concern, verify it
+  live against real sources before fixing — three of the four structural-gap fixes this
+  session were caught/confirmed by actually running collection against live Malaysia data,
+  not by reasoning from the code alone.
 

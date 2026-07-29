@@ -20,7 +20,7 @@ vanilla-JS SPA in `/static` (no build step). Pipeline the whole app is organized
 ## Commands
 ```bash
 source .venv/bin/activate
-python -m pytest -q          # 69 tests, ~1s, network mocked — MUST stay green
+python -m pytest -q          # 102 tests, ~1s, network mocked — MUST stay green
 python app.py                # http://localhost:8000
 python seed_demo.py          # recreate the Acme Cola / Singapore demo
 # reset local data after a run:
@@ -31,11 +31,15 @@ heavy deps: anthropic, playwright, pytrends, Pillow, python-docx). Port 8000 bus
 `lsof -ti:8000 | xargs kill -9`.
 
 ## Do NOT "fix" these (they are honest limitations, not bugs)
-- **Google News article bodies are unresolvable** (encrypted URL token). News `text` from GN
-  is the title-level summary; the real fix is direct publisher RSS feeds. Don't build a GN
-  de-obfuscator.
-- **Quick-commerce & most social are app-only / anti-automation → Tier-3 gaps**, never scrapers.
+- **Google News article bodies are unresolvable** (encrypted URL token) — don't build a GN
+  de-obfuscator. Already mitigated (not eliminated) by direct RSS feeds AND the Bing News
+  channel, both of which resolve via normal redirects and carry real first-paragraph text.
+- **Quick-commerce & most social are app-only / anti-automation → Tier-3 gaps**, never
+  scrapers. This is permanent and deliberate — not one of the "structural gaps" to fix.
 - Reddit/GDELT may 403/429 from some IPs — handled as honest partial failures.
+- GDELT's own relevance matching is loose; `scrapers/gdelt.py` re-validates titles against
+  relevance terms before storing. Its real yield for a narrow brand+country query is small
+  by nature (broad event index, not a brand-review source) — that's not a bug to chase.
 
 ## Conventions
 - Lazy-import heavy optional deps (so tests/base app don't require them).
