@@ -257,19 +257,34 @@ def _confidence_tab(ws, project_id, styles):
     ws["A1"] = "Confidence — sample sizes & low-confidence flags"
     ws["A1"].font = styles["title_font"]
     ws["A2"] = ("Any channel or headline stat resting on < 100 items or a single segment is "
-                "auto-flagged 'emerging / low-confidence'. Do not headline a flagged number.")
+                "auto-flagged 'emerging / low-confidence'. Do not headline a flagged number. "
+                "Items Claude's analysis tagged brand_focus='unrelated' are excluded from every "
+                "stat below (never deleted — see the data tabs and the Brand focus breakdown).")
     ws["A2"].alignment = styles["wrap"]
     dash = analytics.dashboard(project_id)
-    row3 = 3
+    recovery = analytics.relevance_recovery_stats(project_id)
+
+    notes = []
     if dash["syndication_ratio"] > 0:
         pct = round(dash["syndication_ratio"] * 100)
-        ws.cell(row=row3, column=1,
-               value=(f"⚠ {pct}% of items are the same wire story reprinted across outlets "
-                      f"({dash['total_items']} items = {dash['total_stories']} unique stories). "
-                      f"See 'story_group_size' column in the data tabs; treat n-sizes below as "
-                      f"item counts, not independent opinions.")).alignment = styles["wrap"]
-    _write_header(ws, ["Scope", "n (items)", "Net sentiment", "Flag"], row=4, styles=styles)
-    r = 5
+        notes.append(f"⚠ {pct}% of items are the same wire story reprinted across outlets "
+                     f"({dash['total_items']} items = {dash['total_stories']} unique stories). "
+                     f"See 'story_group_size' column in the data tabs; treat n-sizes below as "
+                     f"item counts, not independent opinions.")
+    if recovery["precheck_failed_total"] > 0:
+        notes.append(f"ℹ Semantic relevance backstop: {recovery['precheck_failed_total']} item(s) had "
+                     f"no literal keyword match at collection but were kept for review — "
+                     f"{recovery['recovered_relevant']} confirmed relevant, "
+                     f"{recovery['confirmed_unrelated']} confirmed unrelated (excluded above), "
+                     f"{recovery['pending_analysis']} still awaiting analysis.")
+    row = 3
+    for note in notes:
+        ws.cell(row=row, column=1, value=note).alignment = styles["wrap"]
+        row += 1
+
+    header_row = row + 1
+    _write_header(ws, ["Scope", "n (items)", "Net sentiment", "Flag"], row=header_row, styles=styles)
+    r = header_row + 1
     for ch in analytics.sentiment_by_channel(project_id):
         ws.cell(row=r, column=1, value=f"Channel: {ch['channel']}")
         ws.cell(row=r, column=2, value=ch["n"])

@@ -34,7 +34,12 @@ CHANNEL_INFO: Dict[str, Dict[str, str]] = {
              "method": "Regular RSS + Google News search feeds with monthly/weekly chunking, "
                        "OR keyword filter, strict body-content relevance validation, and a "
                        "market gate that keeps only in-market outlets (by domain ccTLD / market "
-                       "terms) so a Malaysia study isn't flooded with e.g. Indian coverage.",
+                       "terms + demonym) so a Malaysia study isn't flooded with e.g. Indian "
+                       "coverage. Google News items with no literal keyword match anywhere on "
+                       "the page (not even boilerplate) are kept, not dropped, and left for "
+                       "Claude's brand_focus tag to confirm during Analyze — catches paraphrased "
+                       "mentions a keyword-only check would miss (confirmed footer-only/junk "
+                       "matches are still always dropped at collection).",
              "limitation": "Regular RSS cannot reach back in time; only chunked Google News and "
                            "GDELT can. Google News obfuscates article URLs, so its item text is the "
                            "feed summary (title-level) — add direct publisher RSS feeds for full "

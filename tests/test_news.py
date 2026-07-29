@@ -218,6 +218,63 @@ def test_market_filter_can_be_disabled():
     assert "Pahari Maggi conquers Indian hills" in titles  # kept when filter off
 
 
+def test_google_news_paraphrased_mention_is_stored_not_dropped():
+    """Structural gap #3 fix: a Google News item whose title/body never literally says
+    the brand ("Maggi") but is clearly a paraphrased mention ("instant noodle price
+    hikes") is now STORED with relevance_precheck=False instead of hard-dropped —
+    Claude's brand_focus tag makes the final call during Analyze, not a keyword gate."""
+    RSS = """<?xml version='1.0'?><rss version='2.0'><channel><title>GN</title>
+    <item><title>Instant noodle prices climb across Malaysia</title><link>http://gn/x</link>
+      <description>Instant noodle prices climb across Malaysia</description><pubDate>2026-03-01</pubDate></item>
+    </channel></rss>"""
+    # Body never says "Maggi" at all — paraphrase only.
+    ART = ("<html><body><article><h1>Instant noodle prices climb across Malaysia</h1>"
+          "<p>Shoppers say their favourite instant noodle brand has gotten pricier "
+          "this quarter, retailers in Kuala Lumpur confirmed.</p></article></body></html>")
+
+    def fetch(url):
+        if "news.google.com/rss/search" in url:
+            return _Resp(RSS)
+        return _Resp(ART, url="https://www.thestar.com.my/x")  # .my outlet -> passes market gate
+
+    cfg = {
+        "relevance_terms": ["Maggi"],  # the literal keyword that will NOT be found
+        "market": {"country": "Malaysia", "country_code": "MY", "cctld": ".my",
+                  "market_terms": ["Malaysia", "Malaysian"], "languages": ["en"]},
+        "source_plan": {"google_news_feeds": [{"language": "en", "structure": "category_generic",
+            "url": "https://news.google.com/rss/search?q=instant+noodles&hl=en-MY&gl=MY&ceid=MY:en"}],
+            "rss_feeds": []},
+        "collection_settings": {"news_chunk": "none", "market_filter": True},
+    }
+    res = news.collect(cfg, {"start_date": "2026-03-01", "end_date": "2026-03-31"}, fetch_fn=fetch)
+    assert len(res.items) == 1  # stored, not dropped
+    item = res.items[0]
+    assert item["extra"]["relevance_precheck"] is False  # marked for the semantic backstop
+    assert item["extra"]["matched_in"] is None  # honestly: no keyword matched
+
+
+def test_rss_paraphrased_mention_still_dropped_unscoped_feeds_have_no_bound():
+    """A direct RSS feed is an UNSCOPED full firehose (not built from a keyword query),
+    so relaxing the relevance gate there has no volume bound at all. The hard drop must
+    stay for RSS — only Google News (keyword-scoped) gets the semantic backstop."""
+    RSS = """<?xml version='1.0'?><rss version='2.0'><channel><title>Outlet feed</title>
+    <item><title>Weather turns cooler this week</title><link>http://rss/weather</link>
+      <description>Weather turns cooler this week</description><pubDate>2026-03-01</pubDate></item>
+    </channel></rss>"""
+
+    def fetch(url):
+        return _Resp(RSS)
+
+    cfg = {
+        "relevance_terms": ["Maggi"],
+        "market": {"languages": ["en"]},
+        "source_plan": {"google_news_feeds": [], "rss_feeds": ["https://outlet.example/feed"]},
+        "collection_settings": {"news_chunk": "none"},
+    }
+    res = news.collect(cfg, {"fetch_bodies": False}, fetch_fn=fetch)
+    assert res.items == []  # correctly dropped — no keyword match, unscoped feed
+
+
 def test_market_filter_uses_outlet_domain_when_article_unresolved():
     """Real-world Google News case: article URL is an obfuscated redirect that won't
     resolve, but the feed exposes the outlet's homepage — a .my outlet is kept, a

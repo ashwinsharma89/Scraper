@@ -380,7 +380,24 @@ def _collect_feed(url, terms, or_keywords, fetch, fetch_bodies, result, seen_lin
 
         verdict = relevance.validate_relevance(title, terms, article_html)
         if not verdict["relevant"]:
-            continue
+            # A failed keyword check means one of two different things, and they must
+            # be treated differently:
+            #   (a) the term appears ONLY in boilerplate (related-links/footer/nav) —
+            #       CONFIRMED junk per the spec's core example; always hard-drop.
+            #   (b) the term appears NOWHERE on the page at all — no keyword evidence
+            #       either way; MIGHT be a paraphrased mention worth a semantic look.
+            footer_only_junk = bool(article_html) and relevance.term_appears_anywhere(article_html, terms)
+            if not is_google_news or footer_only_junk or not article_html:
+                # Regular RSS feeds are an UNSCOPED full firehose (not built from a
+                # keyword query) — no bound on volume without this gate, so it stays.
+                # Confirmed-junk and no-body-to-check cases also always hard-drop.
+                continue
+            # Reached only for: Google News (keyword-scoped query) + we have the real
+            # page + the term is absent from the ENTIRE page, not just stripped
+            # boilerplate. Store it instead of dropping — Claude's brand_focus tag
+            # during Analyze makes the final relevance call (analytics excludes
+            # brand_focus="unrelated" from headline stats; this item is never counted
+            # as confirmed-relevant until that happens).
 
         # Stored text = the article's real FIRST PARAGRAPHS (below the title), not the
         # headline-echoing feed summary. Falls back to summary only when the body could
@@ -430,6 +447,9 @@ def _collect_feed(url, terms, or_keywords, fetch, fetch_bodies, result, seen_lin
                     "outlet": entry.get("source", "") or outlet_domain or domain,
                     "outlet_url": outlet_url,
                     "body_resolved": body_resolved,
+                    # False = kept via the semantic backstop (no literal keyword match;
+                    # Claude's brand_focus tag decides relevance during Analyze).
+                    "relevance_precheck": verdict["relevant"],
                 },
             }
         )

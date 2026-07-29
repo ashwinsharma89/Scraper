@@ -107,6 +107,27 @@ def matched_terms(text: str, terms: List[str]) -> List[str]:
     return [term for term in terms if _normalize(term) and _normalize(term) in hay]
 
 
+def term_appears_anywhere(html: str, terms: List[str]) -> bool:
+    """True if a term appears ANYWHERE on the raw page — including boilerplate/related-
+    links/nav — as opposed to :func:`contains_any_term` on boilerplate-stripped text.
+
+    This distinguishes two situations that both make ``validate_relevance`` return
+    relevant=False, which matters for callers deciding whether a failed check means
+    "confirmed junk" or "genuinely no mention at all":
+      * term present only in a related-articles/footer/nav widget (confirmed junk —
+        this IS the spec's core example: a footer mention is not a relevant result);
+      * term absent from the page entirely, real content AND boilerplate alike (no
+        signal either way from a keyword match — a candidate for semantic review
+        elsewhere, not evidence of relevance OR irrelevance by itself).
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    return contains_any_term(soup.get_text(" ", strip=True), terms)
+
+
 def validate_relevance(
     headline: str,
     terms: List[str],

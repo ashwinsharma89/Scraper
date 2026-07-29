@@ -364,6 +364,7 @@ def api_analytics(pid: int, name: str, user: str = Depends(require_user)):
         "trend_volume": lambda: analytics.trend_volume_over_time(pid),
         "brand_vs_competitor": lambda: {"data": analytics.brand_vs_competitor_sentiment(pid)},
         "verbatims": lambda: analytics.top_verbatims_per_theme(pid),
+        "relevance_recovery": lambda: analytics.relevance_recovery_stats(pid),
     }
     if name not in fns:
         raise HTTPException(status_code=404, detail=f"unknown aggregate: {name}")

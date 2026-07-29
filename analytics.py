@@ -28,8 +28,23 @@ def _net(counts: Counter, n: int) -> float:
     return round((counts.get("positive", 0) - counts.get("negative", 0)) / n, 3)
 
 
-def _analyzed_rows(project_id: int, source: Optional[str] = None) -> List[Dict[str, Any]]:
-    return [r for r in storage.items_with_analysis(project_id, source) if r.get("sentiment")]
+def _analyzed_rows(project_id: int, source: Optional[str] = None,
+                   exclude_unrelated: bool = True) -> List[Dict[str, Any]]:
+    """Analyzed rows for headline aggregates.
+
+    exclude_unrelated=True (the default for every "headline" stat) drops items Claude's
+    own analysis tagged brand_focus="unrelated" — this is the semantic backstop for
+    collection-time relevance: items whose keyword match was weak/absent are now stored
+    (see scrapers/news.py) rather than hard-dropped, and this is where an actually-
+    irrelevant one gets excluded from sentiment/driver/trend numbers without ever being
+    deleted from the DB (still visible in the Items browser and raw exports).
+    brand_vs_competitor_sentiment() explicitly wants the unrelated bucket VISIBLE (that's
+    its whole point), so it passes exclude_unrelated=False.
+    """
+    rows = [r for r in storage.items_with_analysis(project_id, source) if r.get("sentiment")]
+    if exclude_unrelated:
+        rows = [r for r in rows if (r.get("brand_focus") or "").strip().lower() != "unrelated"]
+    return rows
 
 
 def sentiment_by_channel(project_id: int) -> List[Dict[str, Any]]:
@@ -105,7 +120,9 @@ def trend_volume_over_time(project_id: int) -> Dict[str, Any]:
 
 
 def brand_vs_competitor_sentiment(project_id: int) -> List[Dict[str, Any]]:
-    rows = _analyzed_rows(project_id)
+    # Explicitly include "unrelated" here — this breakdown's whole purpose is to show
+    # how much of the analyzed corpus Claude judged unrelated to the brand/competitors.
+    rows = _analyzed_rows(project_id, exclude_unrelated=False)
     by_focus: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for r in rows:
         focus = r.get("brand_focus") or "unspecified"
@@ -142,6 +159,31 @@ def top_verbatims_per_theme(project_id: int, per_theme: int = 5) -> Dict[str, An
         themes.append({"theme": theme, "n": len(items), "verbatims": verbatims,
                        "low_confidence": len(items) < LOW_CONFIDENCE_THRESHOLD})
     return {"n": len(rows), "themes": themes}
+
+
+def relevance_recovery_stats(project_id: int) -> Dict[str, Any]:
+    """Visibility into the semantic-relevance backstop (structural gap #3 fix).
+
+    Items whose collection-time keyword match failed are now stored instead of
+    hard-dropped (Google News channel only — see scrapers/news.py), tagged
+    extra.relevance_precheck=False, and left for Claude's brand_focus tag to make the
+    final call during normal analysis. This reports how that's playing out: how many
+    were recovered as genuinely relevant vs correctly confirmed unrelated vs still
+    awaiting analysis — proof the mechanism finds real signal, not just noise.
+    """
+    rows = storage.items_with_analysis(project_id)
+    precheck_failed = [r for r in rows if r.get("extra", {}).get("relevance_precheck") is False]
+    recovered = [r for r in precheck_failed if r.get("sentiment")
+                and (r.get("brand_focus") or "").strip().lower() != "unrelated"]
+    confirmed_unrelated = [r for r in precheck_failed if r.get("sentiment")
+                           and (r.get("brand_focus") or "").strip().lower() == "unrelated"]
+    pending = [r for r in precheck_failed if not r.get("sentiment")]
+    return {
+        "precheck_failed_total": len(precheck_failed),
+        "recovered_relevant": len(recovered),
+        "confirmed_unrelated": len(confirmed_unrelated),
+        "pending_analysis": len(pending),
+    }
 
 
 def dashboard(project_id: int) -> Dict[str, Any]:
