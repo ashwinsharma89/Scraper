@@ -10,6 +10,7 @@ import json as _json
 from datetime import date, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
+from scrapers import relevance
 from scrapers.base import ScrapeResult, relevance_terms
 from scrapers.news import chunk_date_ranges
 
@@ -91,6 +92,7 @@ def collect(cfg: Dict[str, Any], params: Optional[Dict[str, Any]] = None,
     start_date = params.get("start_date") or (today - timedelta(days=180)).isoformat()
     end_date = params.get("end_date") or today.isoformat()
 
+    dropped = 0
     for window in chunk_date_ranges(start_date, end_date, "monthly"):
         url = build_url(query, window["after"], window["before"], maxrecords)
         try:
@@ -99,7 +101,17 @@ def collect(cfg: Dict[str, Any], params: Optional[Dict[str, Any]] = None,
                 result.error(f"GDELT chunk {window['after']}..{window['before']} -> HTTP {resp.status_code}")
                 continue
             for item in parse_articles(getattr(resp, "text", "") or ""):
+                # GDELT's server-side matching is loose and often returns country news
+                # unrelated to the query. It's metadata-only, so validate the TITLE against
+                # relevance terms — precision over volume.
+                if terms and not relevance.contains_any_term(item.get("title", ""), terms):
+                    dropped += 1
+                    continue
                 result.add(item)
         except Exception as exc:
             result.error(f"GDELT chunk {window['after']}..{window['before']} failed: {exc}")
+    if dropped:
+        result.diagnostics["irrelevant_dropped"] = dropped
+        result.error(f"GDELT: dropped {dropped} item(s) whose title matched no relevance term "
+                     f"(GDELT server-side matching is unreliable).")
     return result

@@ -72,3 +72,22 @@ def test_gdelt_collect_requires_sourcecountry():
     res = gdelt.collect(cfg, {}, fetch_fn=lambda u: None)
     assert res.items == []
     assert any("sourcecountry" in e for e in res.errors)
+
+
+def test_gdelt_drops_items_whose_title_matches_no_relevance_term():
+    """GDELT server-side matching is loose; the collector must re-check the title so
+    Malaysia-sourced-but-irrelevant news (e.g. foldable phones) is dropped."""
+    payload = ('{"articles":['
+               '{"title":"Maggi price rises in KL","url":"http://a","seendate":"20260115T120000Z","domain":"nst.com.my"},'
+               '{"title":"Foldable phones get pricier this year","url":"http://b","seendate":"20260115T120000Z","domain":"x.my"}'
+               ']}')
+
+    class R:
+        status_code = 200
+        text = payload
+
+    cfg = {"relevance_terms": ["Maggi"], "source_plan": {"gdelt": {"sourcecountry": "MY"}},
+           "collection_settings": {}}
+    res = gdelt.collect(cfg, {"start_date": "2026-01-01", "end_date": "2026-01-31"}, fetch_fn=lambda u: R())
+    assert [i["title"] for i in res.items] == ["Maggi price rises in KL"]  # noise dropped
+    assert res.diagnostics.get("irrelevant_dropped") == 1
