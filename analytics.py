@@ -155,10 +155,17 @@ def dashboard(project_id: int) -> Dict[str, Any]:
             overall[k] += c[k]
         for lang, cnt in c["language_breakdown"].items():
             langs[lang] += cnt
+    total_items = sum(storage.count_items_by_source(project_id).values())
+    total_stories = storage.count_unique_stories(project_id)
     return {
         "project_id": project_id,
         "total_analyzed": total_n,
-        "total_items": sum(storage.count_items_by_source(project_id).values()),
+        "total_items": total_items,
+        # Syndication-adjusted: distinct near-duplicate story clusters. When this is
+        # notably lower than total_items, a chunk of "items" are the same wire story
+        # reprinted across outlets — the real independent-signal n-size is total_stories.
+        "total_stories": total_stories,
+        "syndication_ratio": round(1 - (total_stories / total_items), 3) if total_items else 0.0,
         "unanalyzed": storage.count_unanalyzed(project_id),
         "overall_net_score": _net(overall, total_n),
         "overall_sentiment": dict(overall),

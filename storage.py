@@ -11,12 +11,14 @@ Design principles enforced here (decision-grade data):
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import migrations
@@ -214,6 +216,74 @@ def list_runs(project_id: int, limit: int = 200) -> List[Dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------- #
+# Near-duplicate / syndicated-story clustering
+# --------------------------------------------------------------------------- #
+# A wire story reprinted across outlets is NOT the same content_hash (different link,
+# often a slightly different title/lede), so exact dedup correctly stores each as a
+# distinct item — each has its own lineage and outlet. But counting 5 reprints of one
+# story as 5 independent sentiment data points inflates the apparent n-size. Clustering
+# groups near-duplicates (by title similarity within a tight date window) WITHOUT
+# deleting or merging any row, so total_items stays honest and analytics can also
+# report total_stories (syndication-adjusted).
+_CLUSTER_WINDOW_DAYS = 2
+_CLUSTER_SIMILARITY_THRESHOLD = 0.82
+# Trailing " - Outlet Name" / " | Outlet Name" style suffixes that feeds commonly
+# append; stripped before comparing so the same story from two outlets still matches.
+_OUTLET_SUFFIX_RE = re.compile(r"\s*[-|–—]\s*[A-Za-z0-9.&' ]{2,40}$")
+_PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def _normalize_title_for_clustering(title: str) -> str:
+    t = (title or "").strip()
+    t = _OUTLET_SUFFIX_RE.sub("", t)
+    t = _PUNCT_RE.sub(" ", t.lower())
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _parse_pub_date(published: Optional[str]):
+    if not published:
+        return None
+    try:
+        return date.fromisoformat(str(published)[:10])
+    except ValueError:
+        return None
+
+
+def _find_cluster_match(conn: sqlite3.Connection, project_id: int, title: str,
+                        published: Optional[str]) -> Optional[int]:
+    """Return the cluster_id to adopt if this item is a near-duplicate of an existing
+    one, else None (it becomes its own singleton cluster)."""
+    norm = _normalize_title_for_clustering(title)
+    if not norm:
+        return None
+    pub = _parse_pub_date(published)
+    if pub is None:
+        return None  # no date -> can't safely bound the comparison window
+
+    lo = (pub - timedelta(days=_CLUSTER_WINDOW_DAYS)).isoformat()
+    hi = (pub + timedelta(days=_CLUSTER_WINDOW_DAYS)).isoformat()
+    candidates = conn.execute(
+        "SELECT id, title, cluster_id FROM items WHERE project_id=? AND published BETWEEN ? AND ?",
+        (project_id, lo, hi),
+    ).fetchall()
+
+    best_id, best_ratio = None, 0.0
+    for row in candidates:
+        cand_norm = _normalize_title_for_clustering(row["title"])
+        if not cand_norm:
+            continue
+        ratio = difflib.SequenceMatcher(None, norm, cand_norm).ratio()
+        if ratio > best_ratio:
+            best_ratio, best_id = ratio, row
+    if best_id is not None and best_ratio >= _CLUSTER_SIMILARITY_THRESHOLD:
+        # Adopt the match's existing cluster (it may already represent a cluster of
+        # several items); if the match is itself still a singleton, its own id becomes
+        # the cluster id for both.
+        return best_id["cluster_id"] if best_id["cluster_id"] is not None else best_id["id"]
+    return None
+
+
+# --------------------------------------------------------------------------- #
 # Items (with dedup)
 # --------------------------------------------------------------------------- #
 def save_items(project_id: int, run_id: int, source: str, items: Iterable[Dict[str, Any]]) -> Dict[str, int]:
@@ -243,7 +313,7 @@ def save_items(project_id: int, run_id: int, source: str, items: Iterable[Dict[s
                 dup += 1
                 continue
             try:
-                conn.execute(
+                cur = conn.execute(
                     "INSERT INTO items (project_id, run_id, source, content_hash, title, text, link, "
                     "published, extra_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
@@ -259,11 +329,47 @@ def save_items(project_id: int, run_id: int, source: str, items: Iterable[Dict[s
                         now,
                     ),
                 )
+                new_id = cur.lastrowid
+                # Near-duplicate clustering: assign AFTER insert so this item is itself
+                # a candidate for later inserts in the same batch (chained syndication).
+                match_cluster = _find_cluster_match(conn, project_id, title, published)
+                cluster_id = match_cluster if match_cluster is not None else new_id
+                conn.execute("UPDATE items SET cluster_id=? WHERE id=?", (cluster_id, new_id))
                 new += 1
             except sqlite3.IntegrityError:
                 # Lost a race on the UNIQUE constraint -> it's a duplicate.
                 dup += 1
     return {"returned": returned, "new": new, "duplicate": dup}
+
+
+def count_unique_stories(project_id: int, source: Optional[str] = None) -> int:
+    """Syndication-adjusted item count: distinct cluster_id (each singleton item is its
+    own cluster, so this is <= total item count, never inflated by wire-story reprints).
+
+    COALESCE(cluster_id, id): SQL's COUNT(DISTINCT x) does not count NULLs at all, which
+    would silently undercount rows written before this feature existed (cluster_id is
+    NULL on legacy rows). Falling back to the row's own id treats every such row as its
+    own singleton story, which is exactly correct — it just wasn't clustered yet.
+    """
+    q = "SELECT COUNT(DISTINCT COALESCE(cluster_id, id)) c FROM items WHERE project_id=?"
+    args: List[Any] = [project_id]
+    if source:
+        q += " AND source=?"
+        args.append(source)
+    with get_conn() as conn:
+        row = conn.execute(q, args).fetchone()
+    return int(row["c"] or 0)
+
+
+def cluster_sizes(project_id: int) -> Dict[int, int]:
+    """cluster_id -> number of items in that cluster (>1 means syndicated across outlets).
+    Legacy rows with no cluster_id are treated as their own singleton (see count_unique_stories)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT COALESCE(cluster_id, id) AS cid, COUNT(*) n FROM items WHERE project_id=? GROUP BY cid",
+            (project_id,),
+        ).fetchall()
+    return {r["cid"]: r["n"] for r in rows}
 
 
 def get_item(item_id: int) -> Optional[Dict[str, Any]]:

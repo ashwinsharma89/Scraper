@@ -134,9 +134,29 @@ def _m001_initial(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m002_story_clusters(conn: sqlite3.Connection) -> None:
+    """Near-duplicate / syndicated-story clustering.
+
+    Syndicated wire stories (the same underlying article reprinted across several
+    outlets) are legitimate distinct items — each carries its own lineage and outlet —
+    but counting them as N independent data points inflates sentiment sample sizes.
+    cluster_id groups near-duplicates (by title+date similarity, computed at insert
+    time) WITHOUT deleting or merging rows, so exports can report both total_items
+    (nothing hidden) and total_stories (syndication-adjusted n-size).
+    """
+    conn.executescript(
+        """
+        ALTER TABLE items ADD COLUMN cluster_id INTEGER;
+        CREATE INDEX IF NOT EXISTS idx_items_cluster ON items(project_id, cluster_id);
+        CREATE INDEX IF NOT EXISTS idx_items_published ON items(project_id, published);
+        """
+    )
+
+
 # Ordered list. Index 0 is applied to move user_version 0 -> 1, etc.
 MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _m001_initial,
+    _m002_story_clusters,
 ]
 
 

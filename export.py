@@ -75,6 +75,7 @@ def _autosize(ws, max_width=60):
 DATA_COLUMNS = [
     ("id", "id"), ("source", "source"), ("title", "title"), ("text", "text"),
     ("link", "link"), ("published", "published"), ("run_id", "run_id"),
+    ("story_group_size", "story_group_size"),  # >1 = reprinted/syndicated across outlets
     ("sentiment", "sentiment"), ("sentiment_score", "sentiment_score"), ("language", "language"),
     ("summary_en", "summary_en"), ("rating_signal", "rating_signal"),
     ("purchase_driver", "purchase_driver"), ("usage_occasion", "usage_occasion"),
@@ -103,10 +104,17 @@ def build_workbook(project_id: int, published_after: Optional[str] = None,
     _market_intel_tab(wb.create_sheet("Market Intelligence (Cited)"), project_id, styles)
     _run_log_tab(wb.create_sheet("Run Log"), project_id, styles)
 
+    sizes = storage.cluster_sizes(project_id)
+
+    def _with_group_size(rows):
+        for r in rows:
+            r["story_group_size"] = sizes.get(r.get("cluster_id"), 1)
+        return rows
+
     # Combined master tab: EVERY item across all channels, with analysis columns joined.
     all_rows = _filter_dates(storage.items_with_analysis(project_id), published_after, published_before)
     if all_rows:
-        _channel_data_tab(wb.create_sheet("All Items"), all_rows, styles)
+        _channel_data_tab(wb.create_sheet("All Items"), _with_group_size(all_rows), styles)
 
     # One data tab per channel that actually has items.
     counts = storage.count_items_by_source(project_id)
@@ -115,7 +123,7 @@ def build_workbook(project_id: int, published_after: Optional[str] = None,
         rows = _filter_dates(rows, published_after, published_before)
         if not rows:
             continue
-        _channel_data_tab(wb.create_sheet(_safe_sheet_name(channel)), rows, styles)
+        _channel_data_tab(wb.create_sheet(_safe_sheet_name(channel)), _with_group_size(rows), styles)
 
     settings.ensure_dirs()
     if out_path is None:
@@ -173,11 +181,20 @@ def _summary_tab(ws, project, cfg, styles, after, before):
         ("Competitors", ", ".join(cfg.get("competitors", []))),
         ("", ""),
         ("Total items collected", sum(counts.values())),
+        ("Unique stories (syndication-adjusted)", dash["total_stories"]),
         ("Items analyzed", dash["total_analyzed"]),
         ("Items awaiting analysis", dash["unanalyzed"]),
         ("Overall net sentiment", dash["overall_net_score"]),
         ("", ""),
     ]
+    if dash["syndication_ratio"] > 0:
+        pct = round(dash["syndication_ratio"] * 100)
+        rows.insert(rows.index(("", "")) + 1, (
+            "Syndication note",
+            f"{pct}% of items are reprints of a story already counted elsewhere "
+            f"({dash['total_items']} items = {dash['total_stories']} unique stories). "
+            f"Treat sentiment n-sizes as {dash['total_stories']}, not {dash['total_items']}.",
+        ))
     r = 3
     for k, v in rows:
         ws.cell(row=r, column=1, value=k).font = styles["header_font"] if k and not v == "" else None
@@ -242,6 +259,15 @@ def _confidence_tab(ws, project_id, styles):
     ws["A2"] = ("Any channel or headline stat resting on < 100 items or a single segment is "
                 "auto-flagged 'emerging / low-confidence'. Do not headline a flagged number.")
     ws["A2"].alignment = styles["wrap"]
+    dash = analytics.dashboard(project_id)
+    row3 = 3
+    if dash["syndication_ratio"] > 0:
+        pct = round(dash["syndication_ratio"] * 100)
+        ws.cell(row=row3, column=1,
+               value=(f"⚠ {pct}% of items are the same wire story reprinted across outlets "
+                      f"({dash['total_items']} items = {dash['total_stories']} unique stories). "
+                      f"See 'story_group_size' column in the data tabs; treat n-sizes below as "
+                      f"item counts, not independent opinions.")).alignment = styles["wrap"]
     _write_header(ws, ["Scope", "n (items)", "Net sentiment", "Flag"], row=4, styles=styles)
     r = 5
     for ch in analytics.sentiment_by_channel(project_id):

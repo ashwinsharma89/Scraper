@@ -62,8 +62,10 @@ def draft_report(project_id: int) -> str:
         w(f"- {MARKER}: No cited market data entered yet. Add market size / CAGR / share via the "
           f"Market Intelligence (Cited) workspace.")
     w("")
-    w(f"- Total signals collected across channels: **{dash['total_items']}**; analyzed: "
-      f"**{dash['total_analyzed']}**.")
+    w(f"- Total signals collected across channels: **{dash['total_items']}** "
+      f"({dash['total_stories']} unique stories" +
+      (f", {round(dash['syndication_ratio']*100)}% syndicated/reprinted" if dash["syndication_ratio"] > 0 else "") +
+      f"); analyzed: **{dash['total_analyzed']}**.")
     w(f"- {MARKER}: Synthesize the competitive landscape and market structure.")
     w("")
 
