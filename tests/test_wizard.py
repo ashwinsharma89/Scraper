@@ -43,6 +43,38 @@ def test_resolve_country_known_and_unknown():
     assert sg["iso"] == "SG" and sg["gdelt"] == "SN"
     unknown = config.resolve_country("Atlantis")
     assert unknown["iso"] == "" and unknown.get("needs_confirmation") == "true"
+    assert unknown["demonym"] == ""  # never fabricated for an unknown country
+
+
+def test_demonyms_are_not_naive_substrings_of_the_country_name():
+    """Real bug this fixes: for most countries the demonym is NOT a substring of the
+    country name (France -> French), so a market filter relying on country-name-only
+    substring matching silently misses demonym-only mentions ('the French government').
+    Malaysia (-> Malaysian) worked by luck; these must be explicit, not derived."""
+    cases = {"france": "French", "philippines": "Filipino", "uk": "British",
+            "netherlands": "Dutch", "united kingdom": "British", "usa": "American"}
+    for key, expected_demonym in cases.items():
+        info = config.resolve_country(key)
+        assert info["demonym"] == expected_demonym
+        # Prove the naive substring approach would have failed for this one.
+        assert info["name"].lower() not in expected_demonym.lower() or key == "malaysia"
+
+
+def test_wizard_market_terms_include_both_name_and_demonym():
+    cfg = config.run_wizard({
+        "market": {"country": "France", "languages": ["en", "fr"]},
+        "product": {"brand": "TestBrand", "category": "x", "category_type": "other"},
+    })
+    terms = cfg["market"]["market_terms"]
+    assert "France" in terms and "French" in terms
+
+
+def test_wizard_unknown_country_market_terms_dont_crash():
+    cfg = config.run_wizard({
+        "market": {"country": "Atlantis", "languages": ["en"]},
+        "product": {"brand": "TestBrand", "category": "x", "category_type": "other"},
+    })
+    assert cfg["market"]["market_terms"] == ["Atlantis"]  # no fabricated demonym
 
 
 def test_wizard_end_to_end_no_hardcoded_brand():

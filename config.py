@@ -13,38 +13,43 @@ from typing import Any, Dict, List, Optional
 # --------------------------------------------------------------------------- #
 # Reference tables (facts about the world, NOT about any product)
 # --------------------------------------------------------------------------- #
-# ISO 3166-1 alpha-2 (used for Google News gl/ceid, YouTube regionCode, Trends geo)
-# and best-effort GDELT sourcecountry codes (FIPS-derived; user-confirmable in wizard).
+# ISO 3166-1 alpha-2 (used for Google News gl/ceid, YouTube regionCode, Trends geo),
+# best-effort GDELT sourcecountry codes (FIPS-derived; user-confirmable in wizard), and
+# the demonym (nationality adjective). The demonym matters for the news market filter:
+# many countries' demonym is NOT a substring of the country name (France -> French,
+# Philippines -> Filipino, UK -> British, Netherlands -> Dutch), so an article that only
+# says "the French government..." would silently fail an country-name-only substring
+# check. Malaysia happens to work by luck (Malaysia -> Malaysian); most countries don't.
 COUNTRY_TABLE: Dict[str, Dict[str, str]] = {
-    "singapore": {"name": "Singapore", "iso": "SG", "gdelt": "SN"},
-    "india": {"name": "India", "iso": "IN", "gdelt": "IN"},
-    "united states": {"name": "United States", "iso": "US", "gdelt": "US"},
-    "usa": {"name": "United States", "iso": "US", "gdelt": "US"},
-    "united kingdom": {"name": "United Kingdom", "iso": "GB", "gdelt": "UK"},
-    "uk": {"name": "United Kingdom", "iso": "GB", "gdelt": "UK"},
-    "germany": {"name": "Germany", "iso": "DE", "gdelt": "GM"},
-    "france": {"name": "France", "iso": "FR", "gdelt": "FR"},
-    "japan": {"name": "Japan", "iso": "JP", "gdelt": "JA"},
-    "china": {"name": "China", "iso": "CN", "gdelt": "CH"},
-    "indonesia": {"name": "Indonesia", "iso": "ID", "gdelt": "ID"},
-    "malaysia": {"name": "Malaysia", "iso": "MY", "gdelt": "MY"},
-    "thailand": {"name": "Thailand", "iso": "TH", "gdelt": "TH"},
-    "vietnam": {"name": "Vietnam", "iso": "VN", "gdelt": "VM"},
-    "philippines": {"name": "Philippines", "iso": "PH", "gdelt": "RP"},
-    "australia": {"name": "Australia", "iso": "AU", "gdelt": "AS"},
-    "canada": {"name": "Canada", "iso": "CA", "gdelt": "CA"},
-    "brazil": {"name": "Brazil", "iso": "BR", "gdelt": "BR"},
-    "mexico": {"name": "Mexico", "iso": "MX", "gdelt": "MX"},
-    "spain": {"name": "Spain", "iso": "ES", "gdelt": "SP"},
-    "italy": {"name": "Italy", "iso": "IT", "gdelt": "IT"},
-    "netherlands": {"name": "Netherlands", "iso": "NL", "gdelt": "NL"},
-    "united arab emirates": {"name": "United Arab Emirates", "iso": "AE", "gdelt": "AE"},
-    "uae": {"name": "United Arab Emirates", "iso": "AE", "gdelt": "AE"},
-    "saudi arabia": {"name": "Saudi Arabia", "iso": "SA", "gdelt": "SA"},
-    "south africa": {"name": "South Africa", "iso": "ZA", "gdelt": "SF"},
-    "nigeria": {"name": "Nigeria", "iso": "NG", "gdelt": "NI"},
-    "kenya": {"name": "Kenya", "iso": "KE", "gdelt": "KE"},
-    "south korea": {"name": "South Korea", "iso": "KR", "gdelt": "KS"},
+    "singapore": {"name": "Singapore", "iso": "SG", "gdelt": "SN", "demonym": "Singaporean"},
+    "india": {"name": "India", "iso": "IN", "gdelt": "IN", "demonym": "Indian"},
+    "united states": {"name": "United States", "iso": "US", "gdelt": "US", "demonym": "American"},
+    "usa": {"name": "United States", "iso": "US", "gdelt": "US", "demonym": "American"},
+    "united kingdom": {"name": "United Kingdom", "iso": "GB", "gdelt": "UK", "demonym": "British"},
+    "uk": {"name": "United Kingdom", "iso": "GB", "gdelt": "UK", "demonym": "British"},
+    "germany": {"name": "Germany", "iso": "DE", "gdelt": "GM", "demonym": "German"},
+    "france": {"name": "France", "iso": "FR", "gdelt": "FR", "demonym": "French"},
+    "japan": {"name": "Japan", "iso": "JP", "gdelt": "JA", "demonym": "Japanese"},
+    "china": {"name": "China", "iso": "CN", "gdelt": "CH", "demonym": "Chinese"},
+    "indonesia": {"name": "Indonesia", "iso": "ID", "gdelt": "ID", "demonym": "Indonesian"},
+    "malaysia": {"name": "Malaysia", "iso": "MY", "gdelt": "MY", "demonym": "Malaysian"},
+    "thailand": {"name": "Thailand", "iso": "TH", "gdelt": "TH", "demonym": "Thai"},
+    "vietnam": {"name": "Vietnam", "iso": "VN", "gdelt": "VM", "demonym": "Vietnamese"},
+    "philippines": {"name": "Philippines", "iso": "PH", "gdelt": "RP", "demonym": "Filipino"},
+    "australia": {"name": "Australia", "iso": "AU", "gdelt": "AS", "demonym": "Australian"},
+    "canada": {"name": "Canada", "iso": "CA", "gdelt": "CA", "demonym": "Canadian"},
+    "brazil": {"name": "Brazil", "iso": "BR", "gdelt": "BR", "demonym": "Brazilian"},
+    "mexico": {"name": "Mexico", "iso": "MX", "gdelt": "MX", "demonym": "Mexican"},
+    "spain": {"name": "Spain", "iso": "ES", "gdelt": "SP", "demonym": "Spanish"},
+    "italy": {"name": "Italy", "iso": "IT", "gdelt": "IT", "demonym": "Italian"},
+    "netherlands": {"name": "Netherlands", "iso": "NL", "gdelt": "NL", "demonym": "Dutch"},
+    "united arab emirates": {"name": "United Arab Emirates", "iso": "AE", "gdelt": "AE", "demonym": "Emirati"},
+    "uae": {"name": "United Arab Emirates", "iso": "AE", "gdelt": "AE", "demonym": "Emirati"},
+    "saudi arabia": {"name": "Saudi Arabia", "iso": "SA", "gdelt": "SA", "demonym": "Saudi"},
+    "south africa": {"name": "South Africa", "iso": "ZA", "gdelt": "SF", "demonym": "South African"},
+    "nigeria": {"name": "Nigeria", "iso": "NG", "gdelt": "NI", "demonym": "Nigerian"},
+    "kenya": {"name": "Kenya", "iso": "KE", "gdelt": "KE", "demonym": "Kenyan"},
+    "south korea": {"name": "South Korea", "iso": "KR", "gdelt": "KS", "demonym": "Korean"},
 }
 
 CATEGORY_TYPES = [
@@ -87,8 +92,9 @@ def resolve_country(country: str) -> Dict[str, str]:
     key = (country or "").strip().lower()
     if key in COUNTRY_TABLE:
         return dict(COUNTRY_TABLE[key])
-    # Unknown -> placeholder the user must fill. Never fabricate a code.
-    return {"name": country.strip() or "Unknown", "iso": "", "gdelt": "", "needs_confirmation": "true"}
+    # Unknown -> placeholder the user must fill. Never fabricate a code or a demonym.
+    return {"name": country.strip() or "Unknown", "iso": "", "gdelt": "", "demonym": "",
+            "needs_confirmation": "true"}
 
 
 # --------------------------------------------------------------------------- #
@@ -314,10 +320,13 @@ def run_wizard(intake: Dict[str, Any]) -> Dict[str, Any]:
             "gdelt_country": country_info.get("gdelt", ""),
             "languages": languages,
             # Used by the news market-gate to drop off-market results (e.g. Indian
-            # coverage in a Malaysia study). Country name catches the demonym via
-            # substring ("Malaysia" ⊂ "Malaysian"); add cities/regions to sharpen.
+            # coverage in a Malaysia study). Includes both the country name AND its
+            # demonym — for most countries the demonym is NOT a substring of the name
+            # (France -> French, Philippines -> Filipino, UK -> British), so relying on
+            # the country name alone silently misses demonym-only mentions. Add
+            # cities/regions in Source plan to sharpen further.
             "cctld": f".{iso.lower()}" if iso else "",
-            "market_terms": [country_info["name"]] if country_info.get("name") else [],
+            "market_terms": [t for t in [country_info.get("name", ""), country_info.get("demonym", "")] if t],
         },
         "product": {
             "brand": brand,

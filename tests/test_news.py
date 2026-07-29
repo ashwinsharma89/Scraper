@@ -169,6 +169,39 @@ def test_market_filter_drops_indian_keeps_malaysian():
     assert kept["extra"]["body_resolved"] is True
 
 
+def test_market_filter_catches_demonym_only_mentions():
+    """The false-negative bug: an article that only uses the demonym ('French') and
+    never the country name ('France') must still be kept once market_terms includes
+    both — proving the wizard's demonym fix actually closes the gap end-to-end."""
+    RSS = """<?xml version='1.0'?><rss version='2.0'><channel><title>GN</title>
+    <item><title>Acme Bakery expands</title><link>http://gn/fr</link>
+      <description>Acme Bakery expands</description><pubDate>2026-03-01</pubDate></item>
+    </channel></rss>"""
+    # Article never says "France" — only the demonym. Outlet has no .fr signal either.
+    ART = ("<html><body><article><h1>Acme Bakery expands</h1>"
+          "<p>The French chain opened ten new stores this quarter, its CEO said.</p>"
+          "</article></body></html>")
+
+    def fetch(url):
+        if "news.google.com/rss/search" in url:
+            return _Resp(RSS)
+        return _Resp(ART, url="https://global-food-news.example/x")  # non-.fr outlet
+
+    cfg = {
+        "relevance_terms": ["Acme Bakery"],
+        # market_terms as the WIZARD now produces them: name + demonym.
+        "market": {"country": "France", "country_code": "FR", "cctld": ".fr",
+                  "market_terms": ["France", "French"], "languages": ["en"]},
+        "source_plan": {"google_news_feeds": [{"language": "en", "structure": "brand",
+            "url": "https://news.google.com/rss/search?q=Acme&hl=en-FR&gl=FR&ceid=FR:en"}],
+            "rss_feeds": []},
+        "collection_settings": {"news_chunk": "none", "market_filter": True},
+    }
+    res = news.collect(cfg, {"start_date": "2026-03-01", "end_date": "2026-03-31"}, fetch_fn=fetch)
+    assert len(res.items) == 1  # kept via the demonym, despite no country-name mention
+    assert res.diagnostics.get("off_market_dropped", 0) == 0
+
+
 def test_market_filter_can_be_disabled():
     def fetch(url):
         if "news.google.com/rss/search" in url:
