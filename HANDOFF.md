@@ -33,7 +33,7 @@ context. Read `README.md` for the product overview; this file is the *engineerin
 cd /Users/ashwin/Desktop/marketlens
 source .venv/bin/activate              # venv already exists (Python 3.13)
 python app.py                          # http://localhost:8000
-python -m pytest -q                    # 102 tests, all should pass, ~1s (network mocked)
+python -m pytest -q                    # 114 tests, all should pass, ~1.2s (network mocked)
 python seed_demo.py                    # (re)create the Acme Cola / Singapore demo project
 ```
 
@@ -105,6 +105,31 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
      normal HTTP chain (unlike Google's encrypted token) so it can carry real first-
      paragraph text; wizard generates it alongside Google News automatically; no date-range
      support so it runs once per collection, not chunked.
+- **Three more channels fixed after live testing exposed real bugs** (Reddit/Forums fully
+  live-verified; Trends fixed + unit-tested, live confirmation inconclusive — see §6):
+  1. **Reddit: migrated `.json` → `.rss`.** Reddit's old unauthenticated JSON endpoints are
+     now hard-blocked (403 from Reddit's own edge, confirmed live, not a UA/IP issue). The
+     legacy `.rss` (Atom) feeds still work. Also fixed a real parsing bug: feedparser needs
+     raw response **bytes**, not `.text` (a pre-decoded string), or it silently returns 0
+     entries on some responses. Reddit's RSS rate limit is tight (verified live: sub-5s
+     spacing reliably 429s) — added a Reddit-specific wait-and-retry (`RETRY_429_WAIT`/
+     `RETRY_429_ATTEMPTS` in `scrapers/reddit.py`), plus 429 added to `http_client.py`'s
+     global retry-on-status list. Live-verified: 79 items (75 posts, 4 real comments).
+  2. **Forums: selector picking is now scored, not first-match-wins.** Verified live against
+     forum.lowyat.net that the old logic latched onto a broad `[class*=post]` wildcard
+     matching mostly chrome (timestamps, "Show posts by this member only") before ever
+     trying anything content-specific. Now tries known-good platform classes first
+     (`.postcolor` for IPB/IP.Board, etc.), scores every candidate by the AVERAGE length of
+     substantial (≥40 char) matches — favors real prose over numerous-but-short chrome —
+     and only falls back to wildcards if nothing specific matched. Live-verified: went from
+     82 chrome fragments to 8 real posts on the same real thread.
+  3. **Google Trends: pytrends' own retry is broken.** Its `retries=`/`backoff_factor=`
+     constructor args build a `urllib3.Retry(method_whitelist=...)` — a kwarg removed from
+     current urllib3 — so passing them crashes with `TypeError` (confirmed live; this is why
+     pytrends silently defaults to `retries=0`, and it's the latest available version, so not
+     upgradable away). `scrapers/trends.py` now wraps every pytrends call with its own
+     retry-with-backoff instead. Unit-tested thoroughly; **live end-to-end success is
+     unconfirmed** — see §6.
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
@@ -117,7 +142,11 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   over-drop (neutral-titled local articles from an unknown-ccTLD outlet using neither the
   country name nor its demonym). Toggleable (`market_only`) and editable (`market_terms`,
   now demonym-aware — §5.2). Tune, don't remove the honesty.
-- **Reddit/GDELT** get 403/429 from some IPs (incl. this dev sandbox) — handled as honest
+- **Reddit's old `.json` API is dead** (Reddit blocks it outright, confirmed live) — fixed by
+  migrating to `.rss` (§5's second list, item 1). Its rate limit is tight; still expect
+  occasional 429s under heavy use even with the retry wrapper — handled as honest partial
+  failures, never fatal.
+- **GDELT** still gets 403/429 from some IPs (incl. this dev sandbox) — handled as honest
   partial failures. Works better from a residential IP.
 - **GDELT's own server-side relevance matching is loose/unreliable** — it can return country
   news totally unrelated to the query (a real live bug caught this session: 175 of 202
@@ -129,6 +158,19 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   gaps**, never scrapers. Keep it that way — this is NOT one of the "structural gaps" to fix.
 - E-commerce needs `python -m playwright install chromium` (baked into the Docker image).
 - Report export is `.md` + `.docx` only (no PDF yet).
+- **Google Trends (pytrends) rate-limits aggressively and its own retry is broken** (fixed
+  with our own retry wrapper — §5's second list, item 3) — but this session could NOT get a
+  live 200 after the first request of the day; every subsequent attempt (including after a
+  90s+ cooldown) came back 429. This may be specific to this dev sandbox's IP having been
+  exercised heavily today across Reddit/Forums/Trends testing — **if you pick this up, try
+  it fresh (different IP, or after a longer real-world cooldown, e.g. the next day) before
+  assuming the fix doesn't work.** The retry mechanism itself is solid and unit-tested; only
+  the live proof is outstanding. If it's STILL persistently 429 from a clean IP/cooldown,
+  that would be new information worth documenting here.
+- **Reddit/Forums/Trends rate limits are all tighter than a typical read API** — if you're
+  live-testing any of them, expect to need real multi-second-to-tens-of-seconds waits
+  between requests, and don't hammer them back-to-back while diagnosing (this sandbox's
+  own aggressive diagnostic testing is likely why Trends ended up unconfirmable above).
 
 ## 7. PENDING / SUGGESTED NEXT WORK (pick up here)
 
@@ -148,6 +190,9 @@ Offered to the user but not yet built (in rough priority order):
 8. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set.
 9. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
    (currently API + Excel Confidence tab only, no dedicated frontend chart yet).
+10. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — the
+    retry-wrapper fix is solid and unit-tested, just never got a live 200 after the first
+    request of the session.
 
 ## 8. Gotchas discovered this session (save yourself the debugging)
 
