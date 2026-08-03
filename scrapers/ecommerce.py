@@ -11,6 +11,20 @@ the export Methodology and the UI.
 
 Playwright is imported lazily so the rest of the tool (and the test suite) never
 requires a browser to be installed.
+
+Live-verified across two real Malaysian marketplaces: Shopee returns a soft bot-block
+("Page Unavailable... Sorry, something went wrong. Please log in and try again") for
+EVERY headless request, regardless of query — real page title, near-empty real body.
+Lazada's product/search pages render real content (titles, prices, listings) — verified
+live with actual Maggi products and prices — but its review section did not trigger any
+XHR matching the review-endpoint heuristic even after scrolling, so review-specific
+extraction is unverified there; page-level text (description, price context) still
+captures real signal. Rather than chase Lazada's exact review-tab UI sequence (fragile,
+site-specific, could break on the next redesign — precisely what this tool avoids
+investing in per its own philosophy), the fix here is a correctness one that applies to
+EVERY marketplace: a blocked/error page must never be silently stored as if it were
+real content. Before this fix it was — a real bug, confirmed live on Shopee (0 errors
+logged, 1 item stored with 0 chars of real text).
 """
 from __future__ import annotations
 
@@ -25,6 +39,28 @@ CHANNEL = "ecommerce"
 # Heuristics for spotting review/ratings XHR responses by URL.
 _REVIEW_URL_HINTS = ["review", "ratings", "feedback", "comment", "/qa", "questions"]
 _PRICE_RE = re.compile(r"(?:[$£€¥₹]|\bRp\b|\bS\$)\s?\d[\d.,]*")
+
+# Markers confirmed live in real marketplace bot-block/error pages (Shopee's
+# "Page Unavailable" wall, generic CAPTCHA/verification interstitials).
+_BLOCK_MARKERS = ["page unavailable", "something went wrong", "please log in and try again",
+                  "access denied", "unusual traffic", "are you a human", "are you a robot",
+                  "verify you are human", "captcha", "just a moment",
+                  "enable javascript and cookies"]
+# A real product/search/category page has far more rendered text than this. Below the
+# threshold with no explicit marker is still suspicious for a page that's supposed to
+# be rich e-commerce content — treated as likely-blocked rather than assumed legitimate.
+_MIN_CONTENT_LEN = 300
+
+
+def _looks_blocked(body_text: str) -> Dict[str, Any]:
+    low = (body_text or "").strip().lower()
+    for marker in _BLOCK_MARKERS:
+        if marker in low:
+            return {"blocked": True, "reason": f"page contains block marker {marker!r}"}
+    if len(low) < _MIN_CONTENT_LEN:
+        return {"blocked": True, "reason": f"only {len(low)} chars of rendered content "
+                                          f"(expected a real product/search page)"}
+    return {"blocked": False, "reason": None}
 
 
 def looks_like_review_endpoint(url: str) -> bool:
@@ -149,6 +185,12 @@ def collect(cfg: Dict[str, Any], params: Optional[Dict[str, Any]] = None) -> Scr
                     images = page.eval_on_selector_all(
                         "img", "els => els.map(e => e.src).filter(Boolean)"
                     )
+                    block = _looks_blocked(body_text)
+                    if block["blocked"]:
+                        result.error(f"E-commerce page appears blocked/unavailable ({url}): "
+                                    f"{block['reason']}. Logged, not fabricated.")
+                        continue
+
                     price = extract_price(body_text)
 
                     result.add(
