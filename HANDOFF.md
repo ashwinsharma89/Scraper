@@ -33,7 +33,7 @@ context. Read `README.md` for the product overview; this file is the *engineerin
 cd /Users/ashwin/Desktop/marketlens
 source .venv/bin/activate              # venv already exists (Python 3.13)
 python app.py                          # http://localhost:8000
-python -m pytest -q                    # 114 tests, all should pass, ~1.2s (network mocked)
+python -m pytest -q                    # 125 tests, all should pass, ~1.3s (network mocked)
 python seed_demo.py                    # (re)create the Acme Cola / Singapore demo project
 ```
 
@@ -105,8 +105,9 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
      normal HTTP chain (unlike Google's encrypted token) so it can carry real first-
      paragraph text; wizard generates it alongside Google News automatically; no date-range
      support so it runs once per collection, not chunked.
-- **Three more channels fixed after live testing exposed real bugs** (Reddit/Forums fully
-  live-verified; Trends fixed + unit-tested, live confirmation inconclusive — see §6):
+- **Five more channels fixed after live testing exposed real bugs** (Reddit/Forums/Quora/
+  E-commerce fully live-verified; Trends fixed + unit-tested, live confirmation
+  inconclusive — see §6):
   1. **Reddit: migrated `.json` → `.rss`.** Reddit's old unauthenticated JSON endpoints are
      now hard-blocked (403 from Reddit's own edge, confirmed live, not a UA/IP issue). The
      legacy `.rss` (Atom) feeds still work. Also fixed a real parsing bug: feedparser needs
@@ -130,6 +131,28 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
      upgradable away). `scrapers/trends.py` now wraps every pytrends call with its own
      retry-with-backoff instead. Unit-tested thoroughly; **live end-to-end success is
      unconfirmed** — see §6.
+  4. **Quora: wasn't actually broken — improved diagnostics.** Live-tested and confirmed the
+     channel already behaved correctly (0 items, honest per-URL errors, no fabrication) — the
+     real fix was making the error message specific instead of generic. Quora sits behind a
+     Cloudflare managed bot-challenge ("Just a moment..." JS-challenge, HTTP 403) on every
+     request, confirmed universal across URLs/UAs — harder than Reddit's block since it needs
+     real JavaScript execution, not fixable with `requests`. `scrapers/quora.py` now detects
+     this specifically (`_cloudflare_challenge`, `_block_reason`) instead of a vague "likely
+     blocked". First test coverage this channel has ever had (0 → 7 tests).
+  5. **E-commerce: detect bot-blocks instead of silently storing them as data.** Real bug
+     found live: Shopee returns a soft bot-block ("Page Unavailable... please log in and try
+     again") for every headless request — the scraper was storing this as a legitimate item
+     (real title, 0 chars of body) with **zero errors logged**, a genuine "never fabricate"
+     violation. Added two-layer detection (`_looks_blocked` in `scrapers/ecommerce.py`): known
+     block-page markers + a minimum-content-length fallback (verified live: Shopee's block
+     response varies, and the length heuristic caught a variant the marker list didn't).
+     Live-verified against two real Malaysian marketplaces: Shopee blocked on every attempt
+     (now correctly detected, confirmed with two different block variants); Lazada renders
+     real content (verified with genuine Maggi products/prices) and still collects correctly
+     after this fix (no false positive). Lazada's reviews did not trigger the XHR-based
+     review-interception heuristic even after scrolling — deliberately NOT chased further
+     (fragile, site-specific, could break on the next redesign, against this tool's own
+     philosophy); page-level text (titles/prices/descriptions) is still real, working signal.
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
@@ -171,6 +194,15 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   live-testing any of them, expect to need real multi-second-to-tens-of-seconds waits
   between requests, and don't hammer them back-to-back while diagnosing (this sandbox's
   own aggressive diagnostic testing is likely why Trends ended up unconfirmable above).
+- **Quora is confirmed genuinely, permanently blocked** — do not spend time trying to fix
+  this further short of adding a full headless-browser-with-challenge-solving path (out of
+  scope; would also mean defeating an anti-bot system, which this tool does not do).
+- **Shopee is confirmed genuinely, permanently blocked** the same way — a soft bot-wall on
+  every headless request. **Lazada works for page-level content** but its review section's
+  extraction mechanism is unverified/likely not working (no XHR fired matching the
+  heuristic even after scrolling) — if you want real e-commerce reviews, either investigate
+  Lazada's actual review-loading mechanism (may be server-rendered on a different route, or
+  gated behind a specific tab click) or try another Malaysian marketplace entirely.
 
 ## 7. PENDING / SUGGESTED NEXT WORK (pick up here)
 

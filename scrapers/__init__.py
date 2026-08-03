@@ -26,10 +26,15 @@ _REGISTRY: Dict[str, str] = {
 CHANNEL_INFO: Dict[str, Dict[str, str]] = {
     "ecommerce": {"tier": "1", "name": "E-commerce (Playwright)",
                   "method": "Rendered product/category/search pages; review text and internal "
-                            "review XHR intercepted where detectable. Snapshot semantics — "
-                            "scheduled repeats build price/review time series.",
+                            "review XHR intercepted where detectable; a blocked/error page is "
+                            "detected and reported honestly rather than stored as data. Snapshot "
+                            "semantics — scheduled repeats build price/review time series.",
                   "limitation": "ToS gray zone; internal research, low volume, read-only; proxy "
-                                "recommended beyond light use. No historical backfill."},
+                                "recommended beyond light use. No historical backfill. Verified "
+                                "live: Shopee blocks every headless request (soft bot-wall, now "
+                                "correctly detected/reported); Lazada renders real content "
+                                "(titles/prices/listings) but its reviews did not trigger the "
+                                "XHR-interception heuristic — page-level text still works."},
     "news": {"tier": "1", "name": "News / RSS",
              "method": "Regular RSS + Google News (chunkable, date-scoped) + Bing News (a second, "
                        "independent index, no date-chunking) search feeds, with OR keyword filter, "
