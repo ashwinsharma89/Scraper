@@ -29,6 +29,48 @@ def test_find_next_link_chinese_label():
     assert nxt == "http://forum/thread?page=2"
 
 
+# A realistic IPB-family (e.g. Lowyat.net) fixture: the real content lives in
+# ".postcolor", but a wrapper div with "post" in its class also wraps a bunch of short
+# chrome fragments (timestamps, "show posts by member", profile bio) that a naive
+# "first selector matching anything" approach would latch onto instead. This is the
+# exact real bug caught live against forum.lowyat.net during this fix.
+REAL_FORUM_PAGE = """<html><body>
+  <div class="postwrap">
+    <div class="postheader">TS lidesigns Mar 22 2026, 08:41 PM Show posts by this member only</div>
+    <div class="postprofile">New Member Probation 5 posts Joined: May 2022 From: Kuala Lumpur</div>
+    <div class="postcolor">I have been using this product for months and the quality has really
+      dropped compared to last year, especially the packaging which feels much cheaper now.</div>
+  </div>
+  <div class="postwrap">
+    <div class="postheader">Reply #1 Mar 23 2026, 09:00 AM Show posts by this member only</div>
+    <div class="postprofile">Senior Member 1200 posts Joined: Jan 2019</div>
+    <div class="postcolor">Totally agree, I noticed the same thing when I bought a pack last week
+      at the supermarket near my house, tasted different too.</div>
+  </div>
+</body></html>"""
+
+
+def test_scored_selector_prefers_real_content_over_chrome_wildcard():
+    """Structural fix: the wildcard [class*=post] matches BOTH real content AND chrome
+    (more numerous but short); scoring by average substantial-match length correctly
+    picks .postcolor (real posts) over the wildcard's chrome-diluted average."""
+    posts = forums.extract_posts(REAL_FORUM_PAGE)
+    assert len(posts) == 2
+    texts = " ".join(p["text"] for p in posts)
+    assert "quality has really" in texts and "tasted different too" in texts
+    # Chrome must NOT be what got extracted.
+    assert "Show posts by this member only" not in texts
+    assert "New Member Probation" not in texts
+
+
+def test_broad_fallback_still_works_when_no_specific_selector_matches():
+    """Software using neither a known specific class nor .postcolor still gets SOME
+    extraction via the broad fallback list — verifies the two-tier design end-to-end."""
+    posts = forums.extract_posts(PAGE1)  # uses div.post, not in the specific list
+    assert len(posts) == 2
+    assert "First user" in posts[0]["text"]
+
+
 def test_collect_follows_pagination_with_cap():
     def fetch(url):
         class R:

@@ -4,6 +4,18 @@ User-supplied thread/listing URLs. Post containers are auto-detected from common
 markup or overridden with a custom CSS selector. Pagination follows "next" links,
 recognizing multi-language next-page labels (configured per project language). A page
 cap prevents runaway crawls.
+
+Selector picking is SCORED, not first-match-wins. Verified live against a real modern
+IPB-family forum thread (Lowyat.net): a naive "first selector that matches anything"
+approach picks a broad wildcard like ``[class*=post]`` — which matches real post bodies
+AND unrelated chrome (post-header timestamps, "Show posts by this member only",
+profile/rank sidebars) that also happen to have "post" in their class name. The chrome
+matches are numerous but short/diluting; real post content is comparatively rare but
+consistently long. So candidates are scored by the AVERAGE length of their substantial
+(>=40 char) matches, not by match count — this reliably prefers a specific selector
+like ``.postcolor`` (IPB/IP.Board's actual message-body class, avg ~400 chars/match)
+over a wildcard catching mostly chrome (avg ~200 chars/match) even though the wildcard
+has far more raw matches.
 """
 from __future__ import annotations
 
@@ -14,19 +26,40 @@ from scrapers.base import ScrapeResult
 
 CHANNEL = "forums"
 
-# Common forum post-container patterns, tried in order when no custom selector is set.
-_DEFAULT_SELECTORS = [
+# Specific, high-confidence post-body classes from major forum platforms, tried first.
+_SPECIFIC_SELECTORS = [
+    ".postcolor",       # IPB / IP.Board (e.g. Lowyat.net) — verified live
+    ".post_body",
+    ".postbody",
+    ".post-content",
+    ".message-content",
+    ".post-message",
+    ".postmessage",
+    ".bbp-reply-content",  # bbPress
+    ".message-body",       # XenForo
+]
+# Broader, riskier fallbacks — only consulted if none of the above matched anything.
+_BROAD_SELECTORS = [
     "article",
     "div.post",
     "div.message",
     "li.post",
     "div.comment",
     "div.forum-post",
-    ".post-content",
-    ".postbody",
     "[class*=post]",
     "[class*=message]",
 ]
+_SUBSTANTIAL_MIN_LEN = 40  # below this, a match is more likely chrome than real content
+
+
+def _score_selector(soup, selector: str) -> Optional[Dict[str, Any]]:
+    """Return {"nodes": [...], "score": avg_len} for substantial matches, or None."""
+    nodes = soup.select(selector)
+    substantial = [n for n in nodes if len(n.get_text(" ", strip=True)) >= _SUBSTANTIAL_MIN_LEN]
+    if not substantial:
+        return None
+    avg_len = sum(len(n.get_text(" ", strip=True)) for n in substantial) / len(substantial)
+    return {"nodes": substantial, "score": avg_len}
 
 
 def extract_posts(html: str, selector: Optional[str] = None) -> List[Dict[str, str]]:
@@ -37,14 +70,25 @@ def extract_posts(html: str, selector: Optional[str] = None) -> List[Dict[str, s
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
-    nodes = []
+    nodes: List[Any] = []
     if selector:
         nodes = soup.select(selector)
     else:
-        for sel in _DEFAULT_SELECTORS:
-            nodes = soup.select(sel)
-            if nodes:
-                break
+        candidates = []
+        for sel in _SPECIFIC_SELECTORS:
+            result = _score_selector(soup, sel)
+            if result:
+                candidates.append(result)
+        if not candidates:
+            # No high-confidence selector matched anything — fall back to the broad
+            # (riskier) list, still scored the same way rather than first-match-wins.
+            for sel in _BROAD_SELECTORS:
+                result = _score_selector(soup, sel)
+                if result:
+                    candidates.append(result)
+        if candidates:
+            best = max(candidates, key=lambda c: c["score"])
+            nodes = best["nodes"]
 
     posts: List[Dict[str, str]] = []
     for i, node in enumerate(nodes):

@@ -1,95 +1,181 @@
-"""Reddit comment-tree walk excludes deleted/removed; listing parse; graceful 429."""
-import json
+"""Reddit RSS parsing: post/comment extraction, deleted-exclusion, graceful 429.
+
+The old .json API is blocked by Reddit outright (verified live: 403 from Reddit's own
+edge, not fixable). .rss (Atom) feeds still work for unauthenticated access — this
+module was rewritten around them. Real endpoint shapes and rate-limit behavior were
+confirmed live against r/malaysia before writing these fixtures.
+"""
+import pytest
 
 from scrapers import reddit
 
 
-# A nested comment tree: some deleted, some removed, real replies under a deleted parent.
-COMMENTS = [
-    {"kind": "t1", "data": {
-        "id": "c1", "author": "alice", "body": "Great product overall", "score": 10,
-        "replies": {"data": {"children": [
-            {"kind": "t1", "data": {"id": "c1a", "author": "[deleted]", "body": "[deleted]",
-                                     "replies": ""}},
-            {"kind": "t1", "data": {"id": "c1b", "author": "bob", "body": "Agree, tastes good",
-                                     "replies": ""}},
-        ]}},
-    }},
-    {"kind": "t1", "data": {
-        "id": "c2", "author": "carol", "body": "[removed]",
-        "replies": {"data": {"children": [
-            {"kind": "t1", "data": {"id": "c2a", "author": "dan", "body": "Reply survives removal",
-                                     "replies": ""}},
-        ]}},
-    }},
-    {"kind": "more", "data": {"id": "more1", "children": ["x", "y"]}},
-]
+@pytest.fixture(autouse=True)
+def _no_real_sleeps(monkeypatch):
+    # The module's 429 retry deliberately waits ~20s against the real Reddit API;
+    # tests must not actually sleep for that.
+    monkeypatch.setattr(reddit, "RETRY_429_WAIT", 0)
 
+# A real-shaped Atom listing: first entry is a post, offset by other tags.
+LISTING_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<entry>
+  <author><name>/u/alice</name></author>
+  <id>t3_abc123</id>
+  <link href="https://www.reddit.com/r/malaysia/comments/abc123/maggi_price_hike/" />
+  <title>Maggi price hike noticed at Tesco</title>
+  <published>2026-03-01T12:00:00+00:00</published>
+</entry>
+<entry>
+  <author><name>/u/bob</name></author>
+  <id>t3_def456</id>
+  <link href="https://www.reddit.com/r/malaysia/comments/def456/unrelated/" />
+  <title>Unrelated weather post</title>
+  <published>2026-03-02T12:00:00+00:00</published>
+</entry>
+</feed>"""
 
-def test_walk_comments_excludes_deleted_keeps_real_replies():
-    flat = reddit.walk_comments(COMMENTS)
-    bodies = [c["body"] for c in flat]
-    assert "Great product overall" in bodies
-    assert "Agree, tastes good" in bodies
-    # Deleted and removed comment bodies are gone.
-    assert "[deleted]" not in bodies
-    assert "[removed]" not in bodies
-    # A real reply nested under a REMOVED parent still survives.
-    assert "Reply survives removal" in bodies
-    # 'more' stubs never produce items.
-    assert len(flat) == 3
-
-
-def test_is_deleted():
-    assert reddit.is_deleted({"body": "[deleted]", "author": "x"}) is True
-    assert reddit.is_deleted({"body": "text", "author": "[deleted]"}) is True
-    assert reddit.is_deleted({"body": "text", "author": "real"}) is False
-
-
-def test_parse_listing_posts():
-    payload = {"data": {"children": [
-        {"kind": "t3", "data": {"id": "p1", "title": "Post one", "selftext": "body",
-                                 "permalink": "/r/x/p1", "num_comments": 5, "score": 3,
-                                 "subreddit": "x"}},
-        {"kind": "t3", "data": {"id": "p2", "title": "Post two", "permalink": "/r/x/p2",
-                                 "num_comments": 20, "subreddit": "x"}},
-    ]}}
-    posts = reddit.parse_listing_posts(payload)
-    assert [p["id"] for p in posts] == ["p1", "p2"]
-    assert posts[1]["num_comments"] == 20
+# A real-shaped comments feed: entry 0 = the post itself (t3_), rest are comments (t1_),
+# including a deleted comment and a real reply nested "under" it (RSS is flat, no true
+# nesting, but the reply must still survive being adjacent to a deleted comment).
+COMMENTS_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<entry>
+  <author><name>/u/alice</name></author>
+  <id>t3_abc123</id>
+  <title>Maggi price hike noticed at Tesco</title>
+  <content type="html">post body blob</content>
+</entry>
+<entry>
+  <author><name>/u/carol</name></author>
+  <id>t1_c1</id>
+  <title>/u/carol on Maggi price hike noticed at Tesco</title>
+  <content type="html">&lt;div class="md"&gt;&lt;p&gt;Noticed the same thing at Giant too.&lt;/p&gt;&lt;/div&gt;</content>
+  <published>2026-03-01T13:00:00+00:00</published>
+</entry>
+<entry>
+  <author><name>[deleted]</name></author>
+  <id>t1_c2</id>
+  <title>/u/[deleted] on Maggi price hike noticed at Tesco</title>
+  <content type="html">&lt;div class="md"&gt;&lt;p&gt;[deleted]&lt;/p&gt;&lt;/div&gt;</content>
+  <published>2026-03-01T14:00:00+00:00</published>
+</entry>
+<entry>
+  <author><name>/u/dave</name></author>
+  <id>t1_c3</id>
+  <title>/u/dave on Maggi price hike noticed at Tesco</title>
+  <content type="html">&lt;div class="md"&gt;&lt;p&gt;Prices are up everywhere honestly.&lt;/p&gt;&lt;/div&gt;</content>
+  <published>2026-03-01T15:00:00+00:00</published>
+</entry>
+</feed>"""
 
 
 class _Resp:
-    def __init__(self, text="", status=200):
-        self.text = text
+    def __init__(self, content=b"", status=200):
+        self.content = content
         self.status_code = status
 
 
-def test_collect_graceful_429_keeps_partial():
-    listing = json.dumps({"data": {"children": [
-        {"kind": "t3", "data": {"id": "p1", "title": "Acme Cola review", "selftext": "tasty",
-                                 "permalink": "/r/food/p1", "num_comments": 2, "subreddit": "food"}},
-    ]}})
+# --------------------------------------------------------------------------- #
+# Pure parsing
+# --------------------------------------------------------------------------- #
+def test_parse_rss_posts_extracts_only_post_entries():
+    posts = reddit.parse_rss_posts(LISTING_XML)
+    assert len(posts) == 2
+    assert posts[0]["id"] == "t3_abc123"
+    assert posts[0]["title"] == "Maggi price hike noticed at Tesco"
+    assert posts[0]["author"] == "alice"
+    assert posts[0]["published"] == "2026-03-01"
 
-    calls = {"n": 0}
 
-    def fetch(url, **kwargs):
-        calls["n"] += 1
-        # First listing succeeds; a later sort returns 429.
-        if "new.json" in url:
-            return _Resp(listing)
-        if "top.json" in url:
-            return _Resp("", status=429)
-        if url.endswith("p1.json?limit=200") or "/p1.json" in url:
-            return _Resp(json.dumps([{}, {"data": {"children": COMMENTS}}]))
-        return _Resp(json.dumps({"data": {"children": []}}))
+def test_parse_rss_comments_excludes_deleted_keeps_real_replies():
+    comments = reddit.parse_rss_comments(COMMENTS_XML)
+    bodies = [c["body"] for c in comments]
+    # Post itself (t3_) is not treated as a comment.
+    assert not any("post body blob" in b for b in bodies)
+    # Real comments kept.
+    assert any("Noticed the same thing at Giant" in b for b in bodies)
+    assert any("Prices are up everywhere" in b for b in bodies)
+    # Deleted comment excluded entirely.
+    assert not any("[deleted]" in b for b in bodies)
+    assert len(comments) == 2
 
-    cfg = {"relevance_terms": ["Acme Cola"], "source_plan": {"subreddits": ["food"]}}
-    res = reddit.collect(cfg, {"top_n_comment_posts": 1}, fetch_fn=fetch)
-    # Post from the successful sort is kept despite the 429 on another sort.
+
+def test_is_deleted():
+    assert reddit.is_deleted("[deleted]", "some text") is True
+    assert reddit.is_deleted("real_author", "[removed]") is True
+    assert reddit.is_deleted("real_author", "real comment text") is False
+    assert reddit.is_deleted(None, None) is True
+
+
+# --------------------------------------------------------------------------- #
+# End-to-end collect()
+# --------------------------------------------------------------------------- #
+def _cfg():
+    return {"relevance_terms": ["Maggi"], "source_plan": {"subreddits": ["malaysia"]}}
+
+
+def test_collect_dedupes_across_new_and_top_and_fetches_comments():
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        if "search.rss" in url:
+            return _Resp(LISTING_XML)  # same posts, different sort -> must dedupe
+        if "new.rss" in url or "top.rss" in url:
+            return _Resp(LISTING_XML)
+        if ".rss" in url and "/comments/abc123/" in url:
+            return _Resp(COMMENTS_XML)
+        if ".rss" in url and "/comments/def456/" in url:
+            return _Resp(b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>')
+        return _Resp(b"", status=404)
+
+    res = reddit.collect(_cfg(), {"top_n_comment_posts": 2}, fetch_fn=fetch)
+    posts = [i for i in res.items if i["extra"]["type"] == "post"]
+    comments = [i for i in res.items if i["extra"]["type"] == "comment"]
+
+    # Deduped: 2 unique posts even though new/top/search all returned the same two.
+    assert len(posts) == 2
+    assert {p["title"] for p in posts} == {"Maggi price hike noticed at Tesco", "Unrelated weather post"}
+    # Comments fetched and deleted-filtered.
+    assert len(comments) == 2
+    assert all(c["extra"]["depth"] == 0 for c in comments)  # RSS is flat, honestly labeled
+
+
+def test_collect_requires_subreddits():
+    res = reddit.collect({"relevance_terms": [], "source_plan": {}}, {}, fetch_fn=lambda u: _Resp())
+    assert res.items == []
+    assert any("No subreddits" in e for e in res.errors)
+
+
+def test_collect_graceful_429_keeps_partial_listing_results():
+    def fetch(url):
+        if "new.rss" in url:
+            return _Resp(LISTING_XML)
+        if "top.rss" in url:
+            return _Resp(b"", status=429)
+        if "search.rss" in url:
+            return _Resp(b"", status=429)
+        return _Resp(b"", status=404)  # comment fetches also fail -> no comments, that's fine
+
+    res = reddit.collect(_cfg(), {"top_n_comment_posts": 0}, fetch_fn=fetch)
     titles = [i["title"] for i in res.items]
-    assert "Acme Cola review" in titles
-    # The 429 was logged, not swallowed.
+    # new.rss succeeded -> its posts are kept despite top/search being rate-limited.
+    assert "Maggi price hike noticed at Tesco" in titles
     assert any("429" in e for e in res.errors)
-    # Comments were collected for the discussed post (deleted excluded).
-    assert any(i["extra"].get("type") == "comment" for i in res.items)
+
+
+def test_collect_comment_fetch_429_is_logged_not_fatal():
+    def fetch(url):
+        if "new.rss" in url:
+            return _Resp(LISTING_XML)
+        if "top.rss" in url or "search.rss" in url:
+            return _Resp(b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>')
+        if ".rss" in url and "/comments/" in url:
+            return _Resp(b"", status=429)
+        return _Resp(b"", status=404)
+
+    res = reddit.collect(_cfg(), {"top_n_comment_posts": 5}, fetch_fn=fetch)
+    posts = [i for i in res.items if i["extra"]["type"] == "post"]
+    assert len(posts) == 2  # listings still succeeded
+    assert any("429" in e or "rate-limited" in e for e in res.errors)

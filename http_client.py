@@ -70,7 +70,11 @@ class RetryingSession:
             read=self._retries,
             status=self._retries,
             backoff_factor=backoff_factor,
-            status_forcelist=(500, 502, 503, 504),
+            # 429 included: several channels (Reddit RSS in particular — verified live,
+            # its rate limit is much tighter than a typical API) return 429 under normal
+            # polite use, not just abuse. urllib3 automatically honors a Retry-After
+            # header when present; backoff_factor covers the case where it's absent.
+            status_forcelist=(429, 500, 502, 503, 504),
             allowed_methods=frozenset({"GET", "POST", "HEAD"}),
             raise_on_status=False,
         )
