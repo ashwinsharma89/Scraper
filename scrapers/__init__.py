@@ -68,7 +68,12 @@ CHANNEL_INFO: Dict[str, Dict[str, str]] = {
                         "limitation": "Requires API key; Places returns a capped sample of reviews."},
     "quora": {"tier": "1", "name": "Quora (best-effort)",
               "method": "Question-page scraping with the same strict relevance validation.",
-              "limitation": "Frequently blocks automation; logged honestly when blocked."},
+              "limitation": "Verified live: every request hits Quora's Cloudflare managed "
+                           "bot-challenge (a 'Just a moment...' JS-challenge page, HTTP 403), "
+                           "universal across URLs/User-Agents — requires executing JavaScript "
+                           "to solve, not fixable with requests+BeautifulSoup. Detected and "
+                           "reported specifically, never fabricated; expect this channel to "
+                           "return nothing in practice unless run through a real browser."},
     "image_analysis": {"tier": "1", "name": "Image analysis (EXIF + Claude vision)",
                        "method": "EXIF via Pillow + Claude-vision reading of packaging/labels/claims/prices.",
                        "limitation": "Only runs on images already collected by the e-commerce channel."},
