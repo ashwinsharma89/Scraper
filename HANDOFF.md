@@ -33,7 +33,7 @@ context. Read `README.md` for the product overview; this file is the *engineerin
 cd /Users/ashwin/Desktop/marketlens
 source .venv/bin/activate              # venv already exists (Python 3.13)
 python app.py                          # http://localhost:8000
-python -m pytest -q                    # 125 tests, all should pass, ~1.3s (network mocked)
+python -m pytest -q                    # 127 tests, all should pass, ~1.3s (network mocked)
 python seed_demo.py                    # (re)create the Acme Cola / Singapore demo project
 ```
 
@@ -198,11 +198,21 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   this further short of adding a full headless-browser-with-challenge-solving path (out of
   scope; would also mean defeating an anti-bot system, which this tool does not do).
 - **Shopee is confirmed genuinely, permanently blocked** the same way — a soft bot-wall on
-  every headless request. **Lazada works for page-level content** but its review section's
-  extraction mechanism is unverified/likely not working (no XHR fired matching the
-  heuristic even after scrolling) — if you want real e-commerce reviews, either investigate
-  Lazada's actual review-loading mechanism (may be server-rendered on a different route, or
-  gated behind a specific tab click) or try another Malaysian marketplace entirely.
+  every headless request.
+- **Lazada: real reCAPTCHA found, real review-extraction question left open.** Investigated
+  WHY reviews never triggered the XHR heuristic: a screenshot revealed a reCAPTCHA modal
+  ("We need to check if you are a robot") over the product page that `page.inner_text`
+  never captured at all (iframe-rendered) — `_looks_blocked` now also checks `page.content()`
+  (raw HTML) for CAPTCHA widget markers (recaptcha/hcaptcha/cf-turnstile/funcaptcha/arkose),
+  confirmed live on two distinct real presentations (a modal over content, and — after this
+  session's own testing escalated the block — a full-page challenge on the catalog page
+  too, same pattern as Reddit/Trends). **This closes the "silently misses a real block" bug,
+  but does NOT answer the original question**: whether Lazada reviews load via a real
+  mechanism this tool could capture under normal (non-flagged) conditions is still unknown
+  — the session got CAPTCHA'd before that could be isolated. If you pick this up: try from a
+  fresh session/IP, get past the CAPTCHA-free window, and check whether reviews are server-
+  rendered on a different route or need a specific tab click (do NOT attempt to solve the
+  CAPTCHA itself — that's out of scope per this tool's own operating rules).
 
 ## 7. PENDING / SUGGESTED NEXT WORK (pick up here)
 
