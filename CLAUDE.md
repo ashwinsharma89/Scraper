@@ -37,6 +37,13 @@ heavy deps: anthropic, playwright, pytrends, Pillow, python-docx). Port 8000 bus
 - **Quick-commerce & most social are app-only / anti-automation → Tier-3 gaps**, never
   scrapers. This is permanent and deliberate — not one of the "structural gaps" to fix.
 - Reddit/GDELT may 403/429 from some IPs — handled as honest partial failures.
+- **Lazada product pages (and therefore reviews) are permanently blocked** — Alibaba's
+  anti-crawler system CAPTCHA-challenges the product-detail API on essentially every
+  request (confirmed: even the first request to a fresh product ID, zero interaction).
+  Search/catalog pages still work (real server-rendered HTML). Same tier as Quora/Shopee
+  — don't re-open this. Grocery-delivery platforms (Jaya Grocer, Lotus's) were also
+  evaluated and ruled out — no review system on their product pages, and their search is
+  a hidden JS widget, not a URL pattern. See HANDOFF.md §6 for the full evidence.
 - GDELT's own relevance matching is loose; `scrapers/gdelt.py` re-validates titles against
   relevance terms before storing. Its real yield for a narrow brand+country query is small
   by nature (broad event index, not a brand-review source) — that's not a bug to chase.

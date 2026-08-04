@@ -12,19 +12,37 @@ the export Methodology and the UI.
 Playwright is imported lazily so the rest of the tool (and the test suite) never
 requires a browser to be installed.
 
-Live-verified across two real Malaysian marketplaces: Shopee returns a soft bot-block
-("Page Unavailable... Sorry, something went wrong. Please log in and try again") for
-EVERY headless request, regardless of query — real page title, near-empty real body.
-Lazada's product/search pages render real content (titles, prices, listings) — verified
-live with actual Maggi products and prices — but its review section did not trigger any
-XHR matching the review-endpoint heuristic even after scrolling, so review-specific
-extraction is unverified there; page-level text (description, price context) still
-captures real signal. Rather than chase Lazada's exact review-tab UI sequence (fragile,
-site-specific, could break on the next redesign — precisely what this tool avoids
-investing in per its own philosophy), the fix here is a correctness one that applies to
-EVERY marketplace: a blocked/error page must never be silently stored as if it were
-real content. Before this fix it was — a real bug, confirmed live on Shopee (0 errors
-logged, 1 item stored with 0 chars of real text).
+Live-verified across real Malaysian marketplaces and grocery platforms:
+
+- **Shopee**: soft bot-block ("Page Unavailable... Sorry, something went wrong. Please
+  log in and try again") on EVERY headless request, regardless of query — real page
+  title, near-empty real body. Permanently blocked.
+- **Lazada**: search/catalog pages render real, server-side HTML (verified live: real
+  Maggi products, prices, "3422 items found") and ARE scrapable. Individual PRODUCT
+  pages are NOT: their data (title, price, description, and reviews) loads client-side
+  via Alibaba's shared "mtop" API gateway (Lazada runs on Alibaba infrastructure), and
+  that gateway is gated by Alibaba's anti-crawler system. Confirmed live and
+  reproducibly: the *very first* request to `mtop.global.detail.web.getDetailInfo` on a
+  fresh product ID, with zero scrolling or interaction, returns
+  `{"ret":["FAIL_SYS_USER_VALIDATE","RGV587_ERROR..."],"data":{...,"action":
+  "captcharecaptcha"}}` — an immediate CAPTCHA challenge, not a rate-limit-after-abuse
+  effect. This is a structural, permanent, API-level block, not a UI-sequence problem —
+  there is no "right tab to click" to fix it. `_looks_blocked` correctly catches the
+  resulting page (CAPTCHA widget marker present in raw HTML) and stores nothing.
+- **Grocery delivery platforms** (Jaya Grocer, Lotus's/Tesco MY, etc.): architecturally
+  a poor fit for this channel, not a bot-block. Their product pages are transactional
+  (buy button, price) with no customer review/rating system at all — there is nothing
+  to extract even when accessible. Their search is also typically a client-side JS
+  widget hidden behind a click-to-reveal icon rather than a plain `?q=` URL, so the
+  existing "search-URL template + keyword" mechanism (`build_search_urls`) doesn't
+  cleanly apply without reverse-engineering a per-site interaction sequence — which,
+  same as the Lazada review tab, this tool deliberately does not chase (fragile,
+  site-specific, breaks on redesign).
+
+The correctness fix here applies to EVERY marketplace regardless of the specific block
+mechanism: a blocked/error/no-data page must never be silently stored as if it were real
+content. Before this fix it was — a real bug, confirmed live on Shopee (0 errors logged,
+1 item stored with 0 chars of real text).
 """
 from __future__ import annotations
 

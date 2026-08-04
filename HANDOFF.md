@@ -201,20 +201,35 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   scope; would also mean defeating an anti-bot system, which this tool does not do).
 - **Shopee is confirmed genuinely, permanently blocked** the same way — a soft bot-wall on
   every headless request.
-- **Lazada: real reCAPTCHA found, real review-extraction question left open.** Investigated
-  WHY reviews never triggered the XHR heuristic: a screenshot revealed a reCAPTCHA modal
-  ("We need to check if you are a robot") over the product page that `page.inner_text`
-  never captured at all (iframe-rendered) — `_looks_blocked` now also checks `page.content()`
-  (raw HTML) for CAPTCHA widget markers (recaptcha/hcaptcha/cf-turnstile/funcaptcha/arkose),
-  confirmed live on two distinct real presentations (a modal over content, and — after this
-  session's own testing escalated the block — a full-page challenge on the catalog page
-  too, same pattern as Reddit/Trends). **This closes the "silently misses a real block" bug,
-  but does NOT answer the original question**: whether Lazada reviews load via a real
-  mechanism this tool could capture under normal (non-flagged) conditions is still unknown
-  — the session got CAPTCHA'd before that could be isolated. If you pick this up: try from a
-  fresh session/IP, get past the CAPTCHA-free window, and check whether reviews are server-
-  rendered on a different route or need a specific tab click (do NOT attempt to solve the
-  CAPTCHA itself — that's out of scope per this tool's own operating rules).
+- **Lazada is now confirmed genuinely, permanently blocked at the product-page level —
+  question closed, not open.** A later session got a fresh, uncontaminated IP/session
+  (confirmed via the catalog page rendering clean real content again — 3,422 real "maggi"
+  results, no CAPTCHA) and used it to isolate the original question precisely: does
+  product-detail/review data load through a mechanism this tool could ever capture?
+  Answer: no. Lazada's product pages fetch their data client-side from Alibaba's shared
+  "mtop" API gateway (`mtop.global.detail.web.getDetailInfo`) — Lazada runs on Alibaba's
+  infrastructure — and that gateway is gated by Alibaba's anti-crawler system. Proof: the
+  *very first* request to that endpoint, on a never-before-touched product ID, with zero
+  scrolling or interaction, came back `{"ret":["FAIL_SYS_USER_VALIDATE","RGV587_ERROR..."],
+  "data":{...,"action":"captcharecaptcha"}}` — an immediate challenge, reproduced on a
+  second fresh product ID too. This is a structural, per-request API-level block, not a
+  rate-limit-after-abuse effect and not a "find the right UI sequence" problem — there is
+  no tab-click fix for this. `scrapers/ecommerce.py`'s `_looks_blocked` already catches
+  the resulting page correctly (CAPTCHA marker in raw HTML → error, nothing stored).
+  **Same permanence tier as Quora/Shopee now — do not re-open this.** Search/catalog
+  pages remain genuinely scrapable (real server-rendered HTML); only product-detail (and
+  therefore reviews) is blocked.
+- **Other Malaysian grocery platforms considered (Jaya Grocer, Lotus's/Tesco MY) and
+  ruled out — architectural mismatch, not a bot-block.** Checked as candidate additional
+  e-commerce sources for the same Maggi/Malaysia study. Neither is actually a good fit
+  for this channel: their product pages are transactional grocery-delivery UX (buy
+  button, price) with no customer review/rating system at all, so there's nothing to
+  extract even when reachable. Their search is also a client-side JS widget hidden
+  behind a click-to-reveal icon, not a plain `?q=` URL, so the existing "search-URL
+  template + keyword" mechanism doesn't apply without reverse-engineering a per-site
+  interaction sequence — the same category of fragile, site-specific chase this tool
+  already declines to do for Lazada's review tab. Not worth pursuing further; Shopee +
+  Lazada (search/catalog only) remain the two real e-commerce sources for this market.
 
 ## 7. PENDING / SUGGESTED NEXT WORK (pick up here)
 
