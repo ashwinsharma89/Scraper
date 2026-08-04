@@ -113,3 +113,30 @@ def test_looks_blocked_flags_suspiciously_short_content_even_without_marker():
 def test_looks_blocked_detects_captcha_and_verification_walls():
     assert ecommerce._looks_blocked("Please complete the CAPTCHA to continue browsing." * 10)["blocked"] is True
     assert ecommerce._looks_blocked(("Verify you are human before continuing. " * 20))["blocked"] is True
+
+
+def test_looks_blocked_detects_iframe_captcha_invisible_to_text_extraction():
+    """Real bug found live: a Lazada product page showed a reCAPTCHA modal ("We need
+    to check if you are a robot") that page.inner_text('body') did NOT capture at all
+    (rendered in an iframe) — the visible body text looked like a plausible, if sparse,
+    real page (732 chars, above _MIN_CONTENT_LEN, no text marker matched). Only the raw
+    HTML (page.content()) contained "recaptcha". This is why the raw-HTML check exists
+    as a second layer, independent of the visible-text checks."""
+    # A body_text that would otherwise pass every text-based check (>300 chars, no marker)...
+    plausible_but_captcha_gated_body = ("MAGGI 2-Minute Instant Noodles Curry Flavor 5x79g "
+                                        "Brand: Maggi Flavor: Curry Quantity: " * 5)
+    assert len(plausible_but_captcha_gated_body) > ecommerce._MIN_CONTENT_LEN
+    assert ecommerce._looks_blocked(plausible_but_captcha_gated_body)["blocked"] is False  # text alone misses it
+
+    html_with_recaptcha_iframe = ("<html><body>...</body>"
+                                  "<script>grecaptcha.render('g-recaptcha-container');</script>"
+                                  "<div class=\"g-recaptcha\"></div></html>")
+    result = ecommerce._looks_blocked(plausible_but_captcha_gated_body, html_with_recaptcha_iframe)
+    assert result["blocked"] is True
+    assert "recaptcha" in result["reason"]
+
+
+def test_looks_blocked_does_not_false_positive_on_html_without_captcha():
+    real_html = "<html><body><article>Real product description here, no challenge widgets.</article></body></html>"
+    result = ecommerce._looks_blocked(REAL_LAZADA_CONTENT_TEXT, real_html)
+    assert result["blocked"] is False

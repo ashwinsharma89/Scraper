@@ -44,19 +44,38 @@ _PRICE_RE = re.compile(r"(?:[$£€¥₹]|\bRp\b|\bS\$)\s?\d[\d.,]*")
 # "Page Unavailable" wall, generic CAPTCHA/verification interstitials).
 _BLOCK_MARKERS = ["page unavailable", "something went wrong", "please log in and try again",
                   "access denied", "unusual traffic", "are you a human", "are you a robot",
-                  "verify you are human", "captcha", "just a moment",
-                  "enable javascript and cookies"]
+                  "check if you are a robot", "verify you are human", "captcha",
+                  "just a moment", "enable javascript and cookies"]
+# CAPTCHA widget providers, checked against the raw page HTML (not just visible text).
+# Verified live: a Lazada product page showed a reCAPTCHA modal ("We need to check if
+# you are a robot") that page.inner_text('body') did NOT capture at all — it's rendered
+# in an iframe, invisible to text-based extraction — while the underlying page still
+# reported a plausible-looking body length (732 chars, above _MIN_CONTENT_LEN), so the
+# text-only checks silently missed it. "recaptcha" WAS present in page.content() (the
+# raw HTML) even though absent from the rendered text. This is why block detection
+# must check raw HTML too, not just inner_text.
+_CAPTCHA_HTML_MARKERS = ["recaptcha", "hcaptcha", "cf-turnstile", "funcaptcha", "arkose"]
 # A real product/search/category page has far more rendered text than this. Below the
 # threshold with no explicit marker is still suspicious for a page that's supposed to
 # be rich e-commerce content — treated as likely-blocked rather than assumed legitimate.
 _MIN_CONTENT_LEN = 300
 
 
-def _looks_blocked(body_text: str) -> Dict[str, Any]:
+def _looks_blocked(body_text: str, html: Optional[str] = None) -> Dict[str, Any]:
+    """Detect a bot-block/error/CAPTCHA page. Checks the VISIBLE text first (catches
+    Shopee-style full-page walls), then the raw HTML for CAPTCHA widget markers (catches
+    modal/iframe-based challenges that inner_text never surfaces — see module notes)."""
     low = (body_text or "").strip().lower()
     for marker in _BLOCK_MARKERS:
         if marker in low:
             return {"blocked": True, "reason": f"page contains block marker {marker!r}"}
+    if html:
+        html_low = html.lower()
+        for marker in _CAPTCHA_HTML_MARKERS:
+            if marker in html_low:
+                return {"blocked": True,
+                       "reason": f"CAPTCHA widget ({marker!r}) present in page HTML — likely "
+                                f"a modal/iframe challenge not visible to text extraction"}
     if len(low) < _MIN_CONTENT_LEN:
         return {"blocked": True, "reason": f"only {len(low)} chars of rendered content "
                                           f"(expected a real product/search page)"}
@@ -182,10 +201,11 @@ def collect(cfg: Dict[str, Any], params: Optional[Dict[str, Any]] = None) -> Scr
                     page.wait_for_timeout(1500)  # let review XHRs fire
                     title = page.title()
                     body_text = page.inner_text("body")
+                    page_html = page.content()
                     images = page.eval_on_selector_all(
                         "img", "els => els.map(e => e.src).filter(Boolean)"
                     )
-                    block = _looks_blocked(body_text)
+                    block = _looks_blocked(body_text, page_html)
                     if block["blocked"]:
                         result.error(f"E-commerce page appears blocked/unavailable ({url}): "
                                     f"{block['reason']}. Logged, not fabricated.")
