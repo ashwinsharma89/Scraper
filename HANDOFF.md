@@ -183,13 +183,15 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 - Report export is `.md` + `.docx` only (no PDF yet).
 - **Google Trends (pytrends) rate-limits aggressively and its own retry is broken** (fixed
   with our own retry wrapper — §5's second list, item 3) — but this session could NOT get a
-  live 200 after the first request of the day; every subsequent attempt (including after a
-  90s+ cooldown) came back 429. This may be specific to this dev sandbox's IP having been
-  exercised heavily today across Reddit/Forums/Trends testing — **if you pick this up, try
-  it fresh (different IP, or after a longer real-world cooldown, e.g. the next day) before
-  assuming the fix doesn't work.** The retry mechanism itself is solid and unit-tested; only
-  the live proof is outstanding. If it's STILL persistently 429 from a clean IP/cooldown,
-  that would be new information worth documenting here.
+  live 200; every attempt across two separate testing sessions came back 429. **Confirmed
+  IP-level, not app-level**: a plain `curl` against `trends.google.com/trends/api/explore`
+  (no pytrends, no cookies) returns 429 directly, while `trends.google.com/trends/`
+  (homepage) returns 200 — so this specific sandbox IP is throttled by Google's Trends API
+  backend specifically, unrelated to our code or pytrends. **If you pick this up, try it
+  from a different IP or after a long real-world cooldown (e.g. the next day)** — the retry
+  mechanism itself is solid, unit-tested, and re-verified live (correct 2-retry/20s-backoff
+  cadence, no crash, honest error, no fabricated data). Do not re-diagnose this as a code
+  bug; it isn't one.
 - **Reddit/Forums/Trends rate limits are all tighter than a typical read API** — if you're
   live-testing any of them, expect to need real multi-second-to-tens-of-seconds waits
   between requests, and don't hammer them back-to-back while diagnosing (this sandbox's
@@ -232,9 +234,14 @@ Offered to the user but not yet built (in rough priority order):
 8. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set.
 9. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
    (currently API + Excel Confidence tab only, no dedicated frontend chart yet).
-10. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — the
-    retry-wrapper fix is solid and unit-tested, just never got a live 200 after the first
-    request of the session.
+10. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
+    this sandbox again and confirmed the 429 is IP-level, not app-level: plain `curl` (no
+    pytrends, no cookies) against `trends.google.com/trends/api/explore` returns 429 directly,
+    while `trends.google.com/trends/` (homepage) returns 200 — so it's specifically this
+    sandbox IP being throttled by Google's Trends API backend, not a code issue. The
+    retry-wrapper fix itself re-verified correct (clean 2-retry/20s-backoff cadence, no crash,
+    honest error surfaced, no fabricated data). Nothing left to fix in code — only a fresh
+    IP or a long real-world cooldown can produce a live 200 here.
 
 ## 8. Gotchas discovered this session (save yourself the debugging)
 
