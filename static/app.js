@@ -719,8 +719,14 @@ async function loadItemsTable() {
 // Analysis
 // --------------------------------------------------------------------------- //
 async function viewAnalysis(root) {
+  root.innerHTML = `<div class="card"><span class="muted">Loading…</span></div>`;
   const hasKey = State.health && State.health.keys && State.health.keys.anthropic;
-  const dash = State.dash || {};
+  // Fetch fresh rather than reading the cached State.dash (only updated on project load /
+  // after a collect or analyze job finishes) — reading the cache here let this panel say
+  // "No items to analyze yet" and disable the Analyze buttons even when items genuinely
+  // existed, simply because the cache hadn't been refreshed since they were collected.
+  const dash = await api(`/api/projects/${State.projectId}/dashboard`);
+  State.dash = dash;
   const nItems = dash.total_items || 0;
   const keyChip = hasKey
     ? `<span class="keychip ok">✓ ANTHROPIC_API_KEY detected</span>`
@@ -935,8 +941,14 @@ async function viewSchedules(root) {
 // --------------------------------------------------------------------------- //
 // Export & report
 // --------------------------------------------------------------------------- //
-function viewExport(root) {
-  const dash = State.dash || {};
+async function viewExport(root) {
+  root.innerHTML = `<div class="card"><span class="muted">Loading…</span></div>`;
+  // Fetch fresh rather than reading the cached State.dash — same staleness bug as
+  // viewAnalysis (see its comment): this readiness banner could show "no collected
+  // items" even when items genuinely existed, just because nothing had refreshed the
+  // cache since Collect ran.
+  const dash = await api(`/api/projects/${State.projectId}/dashboard`);
+  State.dash = dash;
   const nItems = dash.total_items || 0;
   const nAnalyzed = dash.total_analyzed || 0;
   let readiness = "";
