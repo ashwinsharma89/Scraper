@@ -23,6 +23,7 @@
     <div class="topbar-right">
       <select id="project-select" title="Active project"></select>
       <button id="new-project-btn" class="ghost">+ New study</button>
+      <button id="new-discovery-btn" class="ghost">+ AI-guided study</button>
       <span id="user-chip" class="chip hidden"></span>
       <button id="logout-btn" class="ghost hidden">Sign out</button>
     </div>
@@ -107,6 +108,21 @@
           <button type="button" class="ghost" data-close>Cancel</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- AI-guided discovery wizard (DESIGN_01_category-discovery.md §12) -->
+  <div id="discovery-modal" class="overlay hidden">
+    <div class="card wizard-card">
+      <div class="card-head"><h2>AI-guided study</h2><button class="x" data-close-discovery>×</button></div>
+      <div id="discovery-steps" class="disc-steps"></div>
+      <div id="discovery-body"></div>
+      <p id="discovery-error" class="error"></p>
+      <div class="actions">
+        <button type="button" class="ghost" id="disc-back">Back</button>
+        <button type="button" id="disc-next">Next</button>
+        <button type="button" class="ghost" data-close-discovery>Cancel</button>
+      </div>
     </div>
   </div>
 

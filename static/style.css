@@ -153,3 +153,22 @@ pre.report { background: #0f1626; color: #d6e0f5; padding: 1rem; border-radius: 
 .dl-btn:hover { background: var(--navy-light); }
 .needs-badge { background: #fff4e0; color: var(--warn); font-size: 10px; font-weight: 700;
   padding: .1rem .45rem; border-radius: 20px; }
+
+/* --- AI-guided discovery wizard --- */
+.disc-steps { display: flex; gap: .3rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.disc-dot { flex: 1; min-width: 60px; text-align: center; font-size: 10px; font-weight: 700;
+  color: var(--muted); padding: .35rem .2rem; border-bottom: 3px solid var(--border); }
+.disc-dot.done { color: var(--good); border-bottom-color: var(--good); }
+.disc-dot.current { color: var(--navy); border-bottom-color: var(--navy); }
+.pick-list { border: 1px solid var(--border); border-radius: 8px; max-height: 320px;
+  overflow-y: auto; margin: .5rem 0; }
+.pick-row { display: flex; align-items: flex-start; gap: .6rem; padding: .55rem .7rem;
+  border-bottom: 1px solid var(--border); }
+.pick-row:last-child { border-bottom: 0; }
+.pick-row input[type=checkbox] { width: auto; margin-top: .2rem; flex-shrink: 0; }
+.pick-row .pick-main { flex: 1; }
+.pick-row .pick-name { font-weight: 700; font-size: 13px; }
+.pick-row .pick-why { color: var(--muted); font-size: 12px; margin-top: .1rem; }
+.spinner-line { color: var(--muted); font-size: 13px; padding: .8rem 0; }
+.confidence-lo { color: var(--warn); font-weight: 700; }
+.confidence-hi { color: var(--good); font-weight: 700; }

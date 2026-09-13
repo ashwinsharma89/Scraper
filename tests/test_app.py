@@ -408,3 +408,108 @@ def test_purge_requires_confirmation(client, monkeypatch):
     r = client.delete(f"/api/projects/{pid}?confirm=DELETE")
     assert r.status_code == 200
     assert storage.get_project(pid) is None
+
+
+def test_suggest_languages_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    import language_suggestion
+    monkeypatch.setattr(language_suggestion, "suggest_languages",
+                        lambda category, geo_scope=None, **kw: {
+                            "category": category,
+                            "languages": [{"code": "hi", "name": "Hindi", "known": True}],
+                            "_summary": {"total": 1, "known_codes": 1, "unknown_codes": 0},
+                        })
+    r = client.post("/api/discovery/suggest-languages", json={"category": "coffee"})
+    assert r.status_code == 200
+    assert r.json()["languages"][0]["code"] == "hi"
+
+
+def test_suggest_languages_endpoint_400_on_empty_category(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/discovery/suggest-languages", json={"category": ""})
+    assert r.status_code == 400
+
+
+def test_suggest_source_types_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    import source_type_mapping
+    monkeypatch.setattr(source_type_mapping, "suggest_source_types",
+                        lambda category, geo_scope=None, **kw: {
+                            "category": category,
+                            "source_types": [{"name": "News", "strategy": "existing_channel",
+                                              "channel": "news"}],
+                            "_summary": {"total": 1, "existing_channel": 1,
+                                        "generic_site_discovery": 0},
+                        })
+    r = client.post("/api/discovery/suggest-source-types", json={"category": "coffee"})
+    assert r.status_code == 200
+    assert r.json()["source_types"][0]["channel"] == "news"
+
+
+def test_suggest_terms_draft_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    import term_expansion
+    monkeypatch.setattr(term_expansion, "suggest_terms",
+                        lambda cfg, term, **kw: {"variants": ["cold coffee"], "brands": [],
+                                                 "translations": {}})
+    r = client.post("/api/discovery/suggest-terms-draft",
+                    json={"cfg": {"product": {"category": "coffee"}}, "term": "coffee"})
+    assert r.status_code == 200
+    assert r.json()["variants"] == ["cold coffee"]
+
+
+def test_launch_study_creates_project_without_generic_domains(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    r = client.post("/api/discovery/launch-study", json={"intake": intake})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["run_id"] is None
+    assert storage.get_project(body["project_id"]) is not None
+
+
+def test_launch_study_starts_a_real_run_for_generic_site_domains(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    import discovery_pipeline
+    import site_intelligence
+
+    captured = {}
+
+    def fake_confirm(category, domains):
+        captured["confirmed"] = (category, domains)
+        return {"confirmed": domains, "count": len(domains)}
+
+    monkeypatch.setattr(site_intelligence, "confirm_sites", fake_confirm)
+
+    def fake_job(project_id, category, domains, **kw):
+        captured["job_called_with"] = (project_id, category, domains, kw.get("run_id"))
+        return {}
+
+    monkeypatch.setattr(discovery_pipeline, "run_source_type_job", fake_job)
+
+    intake = _intake()
+    intake["product"]["category"] = "coffee"
+    r = client.post("/api/discovery/launch-study", json={
+        "intake": intake, "generic_site_domains": ["scoopwhoop.com"], "keywords": ["coffee"],
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["run_id"] is not None
+    run = storage.get_run(body["run_id"])
+    assert run["job_kind"] == "backfill"
+    assert captured["confirmed"] == ("coffee", ["scoopwhoop.com"])
+
+
+def test_launch_study_applies_confirmed_term_expansion(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["product"]["category"] = "cola"
+    r = client.post("/api/discovery/launch-study", json={
+        "intake": intake,
+        "term_expansion": {"term": "cola", "variants": ["diet cola"], "brands": ["Fizzly Max"],
+                           "translations": {}},
+    })
+    assert r.status_code == 200
+    pid = r.json()["project_id"]
+    cfg = storage.get_project(pid)["config"]
+    assert "Fizzly Max" in cfg["competitors"]

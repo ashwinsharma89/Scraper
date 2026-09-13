@@ -1165,4 +1165,345 @@ async function viewExport(root) {
   });
 }
 
+// --------------------------------------------------------------------------- //
+// AI-guided discovery wizard (DESIGN_01_category-discovery.md §12)
+//
+// Each step is client-side wizard state only — nothing is persisted as a real
+// project until the final "Launch study" click calls /api/discovery/launch-study.
+// Steps 4 (sites) is skipped automatically when no selected source type routes to
+// generic_site_discovery — everything else (News, Reddit, ...) already has its own
+// established collection mechanism and needs no site discovery here.
+// --------------------------------------------------------------------------- //
+function discDefaults() {
+  return {
+    step: 0,
+    stepNames: ["Term & geo", "Category", "Languages", "Source types", "Sites", "Brand terms", "Launch"],
+    term: "", brand: "", category_type: "other",
+    geoLevel: "country", geoValue: "", geoCountry: "",
+    category: "", confidence: null, reasoning: "", needsConfirmation: false,
+    languages: [], selectedLanguages: new Set(),
+    sourceTypes: [], selectedSourceTypes: new Set(),
+    sites: [], selectedDomains: new Set(),
+    termSuggestions: null, selectedVariants: new Set(), selectedBrands: new Set(),
+    volumeCap: 500, runDaily: false,
+    busy: false,
+  };
+}
+let Disc = discDefaults();
+
+function openDiscoveryWizard() {
+  Disc = discDefaults();
+  el("discovery-modal").classList.remove("hidden");
+  renderDiscStep();
+}
+el("new-discovery-btn").addEventListener("click", openDiscoveryWizard);
+document.querySelectorAll("[data-close-discovery]").forEach(b => b.addEventListener("click", () =>
+  el("discovery-modal").classList.add("hidden")));
+
+function discGeoScope() {
+  if (!Disc.geoValue.trim()) return null;
+  const country = Disc.geoLevel === "country" ? Disc.geoValue.trim() : Disc.geoCountry.trim();
+  if (!country) return null;
+  return { level: Disc.geoLevel, value: Disc.geoValue.trim(), country };
+}
+
+function discDotsHtml() {
+  return Disc.stepNames.map((s, i) => {
+    const cls = i < Disc.step ? "done" : i === Disc.step ? "current" : "";
+    return `<div class="disc-dot ${cls}">${i + 1}. ${esc(s)}</div>`;
+  }).join("");
+}
+
+function renderDiscStep() {
+  el("discovery-error").textContent = "";
+  el("discovery-steps").innerHTML = discDotsHtml();
+  el("disc-back").disabled = Disc.step === 0 || Disc.busy;
+  el("disc-next").disabled = Disc.busy;
+  el("disc-next").textContent = Disc.busy ? "Working…"
+    : Disc.step === Disc.stepNames.length - 1 ? "Launch study" : "Next";
+  const body = el("discovery-body");
+  const renderers = [discStep0, discStep1, discStep2, discStep3, discStep4, discStep5, discStep6];
+  renderers[Disc.step](body);
+}
+
+// IMPORTANT: this must NOT re-render the step body. The click handler calls this
+// BEFORE reading the current step's live form values into Disc — a full re-render
+// here would rebuild those inputs from (still-stale) Disc state and silently wipe
+// out whatever the user just typed before discAdvanceFromN() ever gets to read it.
+// (Found live: the term field appeared to "not save" on every single Next click.)
+function discSetBusy(isBusy) {
+  Disc.busy = isBusy;
+  el("disc-back").disabled = isBusy || Disc.step === 0;
+  el("disc-next").disabled = isBusy;
+  el("disc-next").textContent = isBusy ? "Working…"
+    : Disc.step === Disc.stepNames.length - 1 ? "Launch study" : "Next";
+}
+function discFail(err) { Disc.busy = false; renderDiscStep(); el("discovery-error").textContent = err.message || String(err); }
+
+// --- Step 0: term + geo-scope ------------------------------------------------
+function discStep0(body) {
+  body.innerHTML = `
+    <label>What are you researching? <input id="d-term" placeholder="e.g. coffee, two-wheeler insurance" value="${esc(Disc.term)}" /></label>
+    <label>Brand name (optional) <input id="d-brand" placeholder="e.g. Acme Cola" value="${esc(Disc.brand)}" /></label>
+    <label>Geo-scope level
+      <select id="d-geolevel">
+        <option value="country">Country</option>
+        <option value="state">State / province</option>
+        <option value="region">Region</option>
+        <option value="city">City</option>
+      </select></label>
+    <label id="d-geovalue-label">Country <input id="d-geovalue" placeholder="e.g. India" value="${esc(Disc.geoValue)}" /></label>
+    <label id="d-geocountry-wrap" class="hidden">Which country is that in?
+      <input id="d-geocountry" placeholder="e.g. India" value="${esc(Disc.geoCountry)}" /></label>
+    <p class="muted">A city/state/region study still needs its country named, so market facts
+      (currency, language defaults, etc.) resolve correctly.</p>`;
+  const levelSel = el("d-geolevel"); levelSel.value = Disc.geoLevel;
+  function syncGeoLabels() {
+    const lvl = levelSel.value;
+    el("d-geovalue-label").firstChild.textContent =
+      (lvl === "country" ? "Country " : lvl === "state" ? "State / province " :
+       lvl === "region" ? "Region " : "City ");
+    el("d-geocountry-wrap").classList.toggle("hidden", lvl === "country");
+  }
+  syncGeoLabels();
+  levelSel.addEventListener("change", syncGeoLabels);
+}
+
+async function discAdvanceFrom0() {
+  Disc.term = el("d-term").value.trim();
+  Disc.brand = el("d-brand").value.trim();
+  Disc.geoLevel = el("d-geolevel").value;
+  Disc.geoValue = el("d-geovalue").value.trim();
+  Disc.geoCountry = Disc.geoLevel === "country" ? Disc.geoValue : el("d-geocountry").value.trim();
+  if (!Disc.term) throw new Error("Tell us what you're researching (a product, category, or topic).");
+  if (!Disc.geoValue) throw new Error("Geo-scope value is required.");
+  if (Disc.geoLevel !== "country" && !Disc.geoCountry) throw new Error("That location's country is required.");
+  const r = await api("/api/discovery/classify-category", { method: "POST",
+    body: { term: Disc.term, geo_scope: discGeoScope() } });
+  Disc.category = r.category; Disc.confidence = r.confidence;
+  Disc.reasoning = r.reasoning; Disc.needsConfirmation = r.needs_confirmation;
+}
+
+// --- Step 1: confirm category -------------------------------------------------
+function discStep1(body) {
+  const confCls = Disc.confidence >= 0.8 ? "confidence-hi" : "confidence-lo";
+  body.innerHTML = `
+    <p>AI classification of "<b>${esc(Disc.term)}</b>":</p>
+    <label>Category <input id="d-category" value="${esc(Disc.category)}" /></label>
+    <p class="muted">Confidence: <span class="${confCls}">${Math.round((Disc.confidence || 0) * 100)}%</span></p>
+    <p class="muted">${esc(Disc.reasoning || "")}</p>
+    ${Disc.needsConfirmation ? '<div class="note">The model flagged this as a lower-confidence guess — please check the category text above before continuing.</div>' : ""}`;
+}
+
+async function discAdvanceFrom1() {
+  Disc.category = el("d-category").value.trim();
+  if (!Disc.category) throw new Error("Category is required.");
+  const r = await api("/api/discovery/suggest-languages", { method: "POST",
+    body: { category: Disc.category, geo_scope: discGeoScope() } });
+  Disc.languages = r.languages;
+  Disc.selectedLanguages = new Set(r.languages.map(l => l.code));
+}
+
+// --- Step 2: languages (blocks on explicit confirmation, §11) ---------------
+function discStep2(body) {
+  if (!Disc.languages.length) {
+    body.innerHTML = `<p class="muted">No languages suggested — add at least one code manually.</p>
+      <label>Language code <input id="d-lang-manual" placeholder="e.g. en" /></label>`;
+    return;
+  }
+  body.innerHTML = `<p>Confirm which languages this study should cover:</p>
+    <div class="pick-list">${Disc.languages.map(l => `
+      <label class="pick-row"><input type="checkbox" data-lang="${esc(l.code)}" ${Disc.selectedLanguages.has(l.code) ? "checked" : ""} />
+        <div class="pick-main"><div class="pick-name">${esc(l.name || l.code)} (${esc(l.code)})${l.known ? "" : ' <span class="badge neu">unrecognized code</span>'}</div>
+        <div class="pick-why">${esc(l.why || "")}</div></div></label>`).join("")}</div>
+    <label>Add another code (optional) <input id="d-lang-manual" placeholder="e.g. te" /></label>`;
+  body.querySelectorAll("[data-lang]").forEach(cb => cb.addEventListener("change", () => {
+    if (cb.checked) Disc.selectedLanguages.add(cb.dataset.lang); else Disc.selectedLanguages.delete(cb.dataset.lang);
+  }));
+}
+
+async function discAdvanceFrom2() {
+  const manual = (el("d-lang-manual")?.value || "").trim();
+  if (manual) Disc.selectedLanguages.add(manual);
+  if (Disc.selectedLanguages.size === 0) throw new Error("Select or add at least one language.");
+  const r = await api("/api/discovery/suggest-source-types", { method: "POST",
+    body: { category: Disc.category, geo_scope: discGeoScope() } });
+  Disc.sourceTypes = r.source_types;
+  // Tier-3/app-only platforms (Instagram, WhatsApp, ...) are shown but never
+  // pre-selected -- there is no real mechanism to collect from them (CLAUDE.md's
+  // documented, permanent gap), so a wizard defaulting them "on" would misleadingly
+  // suggest this study will cover them.
+  Disc.selectedSourceTypes = new Set(r.source_types.filter(s => s.strategy !== "unsupported").map(s => s.name));
+}
+
+// --- Step 3: source types (Layer 1 + Layer 2 routing, §2) -------------------
+function discStep3(body) {
+  if (!Disc.sourceTypes.length) {
+    body.innerHTML = `<p class="muted">No source types suggested for this category.</p>`;
+    return;
+  }
+  body.innerHTML = `<p>Which kinds of sources should this study collect from?</p>
+    <div class="pick-list">${Disc.sourceTypes.map(s => {
+      const unsupported = s.strategy === "unsupported";
+      const badge = s.strategy === "existing_channel" ? `<span class="badge tier1">${esc(s.channel)} channel</span>`
+        : unsupported ? '<span class="badge tier3">not supported</span>'
+        : '<span class="badge tier2">new: site discovery</span>';
+      return `<label class="pick-row"><input type="checkbox" data-st="${esc(s.name)}"
+          ${Disc.selectedSourceTypes.has(s.name) ? "checked" : ""} ${unsupported ? "disabled" : ""} />
+        <div class="pick-main"><div class="pick-name">${esc(s.name)} ${badge}</div>
+        <div class="pick-why">${esc(s.why || "")}${unsupported
+          ? " — app-only/anti-automation platform; MarketLens has no way to collect from this (documented gap, not a bug)." : ""}</div></div></label>`;
+    }).join("")}</div>`;
+  body.querySelectorAll("[data-st]:not(:disabled)").forEach(cb => cb.addEventListener("change", () => {
+    if (cb.checked) Disc.selectedSourceTypes.add(cb.dataset.st); else Disc.selectedSourceTypes.delete(cb.dataset.st);
+  }));
+}
+
+function discHasGenericSiteType() {
+  return Disc.sourceTypes.some(s => Disc.selectedSourceTypes.has(s.name) && s.strategy === "generic_site_discovery");
+}
+
+async function discAdvanceFrom3() {
+  if (Disc.selectedSourceTypes.size === 0) throw new Error("Select at least one source type.");
+  if (discHasGenericSiteType()) {
+    const r = await api("/api/discovery/sites", { method: "POST",
+      body: { category: Disc.category, geo_scope: discGeoScope() } });
+    Disc.sites = r.sites;
+    Disc.selectedDomains = new Set(r.sites.filter(s => !s.needs_validation).map(s => s.domain));
+  } else {
+    Disc.sites = []; Disc.selectedDomains = new Set();
+    Disc.step++;  // skip the sites step entirely — nothing selected routes to it
+  }
+}
+
+// --- Step 4: sites (only reached when a generic-site source type was picked) -
+function discStep4(body) {
+  if (!Disc.sites.length) {
+    body.innerHTML = `<p class="muted">No candidate sites found for this category/market.</p>`;
+    return;
+  }
+  body.innerHTML = `<p>Confirm which real sites to actually collect from. Sites with a proven
+    track record are pre-checked; new/unverified ones need your explicit OK.</p>
+    <div class="pick-list">${Disc.sites.map(s => `
+      <label class="pick-row"><input type="checkbox" data-site="${esc(s.domain)}" ${Disc.selectedDomains.has(s.domain) ? "checked" : ""} />
+        <div class="pick-main"><div class="pick-name">${esc(s.name || s.domain)} <span class="muted">(${esc(s.domain)})</span>
+          ${s.known ? '<span class="badge tier1">known</span>' : ""}
+          ${s.needs_validation ? '<span class="needs-badge">needs validation</span>' : ""}
+          ${s.validated_by_human ? '<span class="badge tier1">human-validated</span>' : ""}</div>
+        <div class="pick-why">${esc(s.why || "")}${s.times_used ? ` · used ${s.times_used}× before, confidence ${Math.round((s.confidence || 0) * 100)}%` : ""}</div></div></label>`).join("")}</div>`;
+  body.querySelectorAll("[data-site]").forEach(cb => cb.addEventListener("change", () => {
+    if (cb.checked) Disc.selectedDomains.add(cb.dataset.site); else Disc.selectedDomains.delete(cb.dataset.site);
+  }));
+}
+
+async function discAdvanceFrom4() {
+  const draftCfg = {
+    market: { country: Disc.geoCountry, languages: [...Disc.selectedLanguages] },
+    product: { brand: Disc.brand, category: Disc.category, category_type: Disc.category_type },
+    relevance_terms: [Disc.category],
+  };
+  const r = await api("/api/discovery/suggest-terms-draft", { method: "POST",
+    body: { cfg: draftCfg, term: Disc.category } });
+  Disc.termSuggestions = r;
+  Disc.selectedVariants = new Set(r.variants || []);
+  Disc.selectedBrands = new Set(r.brands || []);
+}
+
+// --- Step 5: brand/term expansion (reuses term_expansion.py unchanged) ------
+function discStep5(body) {
+  const t = Disc.termSuggestions;
+  if (!t || (!t.variants?.length && !t.brands?.length)) {
+    body.innerHTML = `<p class="muted">No additional variants/brands suggested — you can add
+      competitors later from the Source plan tab.</p>`;
+    return;
+  }
+  const rows = (list, prefix, selectedSet) => list.map(v => `
+    <label class="pick-row"><input type="checkbox" data-${prefix}="${esc(v)}" ${selectedSet.has(v) ? "checked" : ""} />
+      <div class="pick-main"><div class="pick-name">${esc(v)}</div></div></label>`).join("");
+  body.innerHTML = `
+    ${t.variants?.length ? `<p>Product variants / real search terms to also track:</p><div class="pick-list">${rows(t.variants, "variant", Disc.selectedVariants)}</div>` : ""}
+    ${t.brands?.length ? `<p>Real competitor brands found:</p><div class="pick-list">${rows(t.brands, "brand", Disc.selectedBrands)}</div>` : ""}`;
+  body.querySelectorAll("[data-variant]").forEach(cb => cb.addEventListener("change", () => {
+    if (cb.checked) Disc.selectedVariants.add(cb.dataset.variant); else Disc.selectedVariants.delete(cb.dataset.variant);
+  }));
+  body.querySelectorAll("[data-brand]").forEach(cb => cb.addEventListener("change", () => {
+    if (cb.checked) Disc.selectedBrands.add(cb.dataset.brand); else Disc.selectedBrands.delete(cb.dataset.brand);
+  }));
+}
+
+async function discAdvanceFrom5() { /* nothing to fetch — step 6 is the review/launch screen */ }
+
+// --- Step 6: review & launch --------------------------------------------------
+function discStep6(body) {
+  const genericDomains = [...Disc.selectedDomains];
+  body.innerHTML = `
+    <div class="card">
+      <p><b>Category:</b> ${esc(Disc.category)}</p>
+      <p><b>Geo-scope:</b> ${esc(Disc.geoLevel)} — ${esc(Disc.geoValue)} (${esc(Disc.geoCountry)})</p>
+      <p><b>Languages:</b> ${[...Disc.selectedLanguages].map(esc).join(", ")}</p>
+      <p><b>Source types:</b> ${[...Disc.selectedSourceTypes].map(esc).join(", ")}</p>
+      ${genericDomains.length ? `<p><b>Sites to collect from:</b> ${genericDomains.map(esc).join(", ")}</p>` : ""}
+    </div>
+    <label>Per-source volume cap <input id="d-volcap" type="number" min="10" value="${Disc.volumeCap}" /></label>
+    <label><input type="checkbox" id="d-daily" ${Disc.runDaily ? "checked" : ""} style="width:auto;display:inline-block;margin-right:.4rem" />
+      Also run this as a standing daily job</label>
+    ${Disc.runDaily ? '<div class="note">Daily scheduling isn\'t wired up yet — this just records the intent; you\'ll need to re-run the backfill manually for now.</div>' : ""}
+    ${genericDomains.length ? '<p class="muted">Clicking Launch confirms these sites into the shared site-intelligence ledger and starts a real backfill job in the background — you can watch its progress in the Run log tab once the study opens.</p>' : ""}`;
+  el("d-daily").addEventListener("change", (e) => { Disc.runDaily = e.target.checked; });
+}
+
+async function discLaunch() {
+  Disc.volumeCap = parseInt(el("d-volcap").value || "500", 10);
+  const intake = {
+    name: Disc.brand || Disc.category,
+    market: { country: Disc.geoCountry, languages: [...Disc.selectedLanguages],
+             geo_scope: discGeoScope() },
+    product: { brand: Disc.brand, category: Disc.category, category_type: Disc.category_type },
+    competitors: [...Disc.selectedBrands],
+    keywords: { trend_terms: [] },
+  };
+  const payload = {
+    intake, generic_site_domains: [...Disc.selectedDomains],
+    keywords: [Disc.category, ...Disc.selectedVariants],
+    volume_cap: Disc.volumeCap, run_daily: Disc.runDaily,
+  };
+  if (Disc.termSuggestions && (Disc.selectedVariants.size || Disc.selectedBrands.size)) {
+    payload.term_expansion = { term: Disc.category, variants: [...Disc.selectedVariants],
+      brands: [...Disc.selectedBrands], translations: Disc.termSuggestions.translations || {} };
+  }
+  const r = await api("/api/discovery/launch-study", { method: "POST", body: payload });
+  el("discovery-modal").classList.add("hidden");
+  State.projectId = r.project_id;
+  toast(r.run_id ? `Study "${r.name}" launched — collection running in the background`
+                : `Study "${r.name}" created`);
+  await loadProjects();
+  switchView(r.run_id ? "runlog" : "collect");
+}
+
+const discAdvancers = [discAdvanceFrom0, discAdvanceFrom1, discAdvanceFrom2, discAdvanceFrom3,
+                       discAdvanceFrom4, discAdvanceFrom5];
+
+el("disc-next").addEventListener("click", async () => {
+  if (Disc.step === Disc.stepNames.length - 1) {
+    discSetBusy(true);
+    try { await discLaunch(); } catch (e) { discFail(e); }
+    return;
+  }
+  discSetBusy(true);
+  try {
+    const before = Disc.step;
+    await discAdvancers[Disc.step]();
+    if (Disc.step === before) Disc.step++;  // an advancer may itself skip a step (see step 3)
+    Disc.busy = false;
+    renderDiscStep();
+  } catch (e) { discFail(e); }
+});
+
+el("disc-back").addEventListener("click", () => {
+  if (Disc.step === 0) return;
+  Disc.step--;
+  if (Disc.step === 4 && !Disc.sites.length && !discHasGenericSiteType()) Disc.step--;  // skip sites going back too
+  renderDiscStep();
+});
+
 boot().catch(e => console.error(e));

@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, UploadFile
@@ -21,6 +22,7 @@ import analytics
 import archive
 import auth
 import config as config_mod
+import discovery_pipeline
 import export as export_mod
 import jobs
 import market_intel
@@ -227,6 +229,113 @@ def api_confirm_sites(body: Dict[str, Any], user: str = Depends(require_user)):
         return site_intelligence.confirm_sites(category, domains)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/discovery/suggest-languages")
+def api_suggest_languages(body: Dict[str, Any], user: str = Depends(require_user)):
+    category = (body or {}).get("category", "")
+    geo_scope = (body or {}).get("geo_scope")
+    import language_suggestion
+    try:
+        return language_suggestion.suggest_languages(category, geo_scope=geo_scope)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/discovery/suggest-source-types")
+def api_suggest_source_types(body: Dict[str, Any], user: str = Depends(require_user)):
+    category = (body or {}).get("category", "")
+    geo_scope = (body or {}).get("geo_scope")
+    import source_type_mapping
+    try:
+        return source_type_mapping.suggest_source_types(category, geo_scope=geo_scope)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/discovery/suggest-terms-draft")
+def api_suggest_terms_draft(body: Dict[str, Any], user: str = Depends(require_user)):
+    """Same as /api/projects/{pid}/suggest-terms (term_expansion.suggest_terms), but takes
+    a raw draft config instead of a project id — the new wizard has no project yet at this
+    step (DESIGN_01 §12: "each step is a client-side wizard state ... until the final step")."""
+    body = body or {}
+    cfg = body.get("cfg") or {}
+    term = (body.get("term") or "").strip() or cfg.get("product", {}).get("category", "")
+    import term_expansion
+    try:
+        return term_expansion.suggest_terms(cfg, term)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/discovery/launch-study")
+def api_launch_study(body: Dict[str, Any], user: str = Depends(require_user)):
+    """Wizard step j (Review & launch): creates the real project via the existing,
+    unchanged /api/projects/wizard validation (reused directly, not duplicated), then —
+    for any confirmed generic-site-discovery domains — starts a real, resumable
+    background job (Increment 6's run_source_type_job) via storage.start_run() +
+    a daemon thread, returning the run_id immediately so the client can poll the
+    existing GET /api/projects/{pid}/runs for status instead of a new endpoint.
+    """
+    body = body or {}
+    intake = body.get("intake") or {}
+    generic_domains: List[str] = [d for d in (body.get("generic_site_domains") or []) if d]
+    keywords = body.get("keywords") or []
+    volume_cap = int(body.get("volume_cap") or discovery_pipeline.DEFAULT_PER_SOURCE_CAP)
+    run_daily = bool(body.get("run_daily"))
+    term_exp = body.get("term_expansion") or {}  # {term, variants, brands, translations}
+
+    project = api_wizard(intake, user)  # reuses all existing wizard validation unchanged
+    pid = project["id"]
+    cfg = project["config"]
+
+    # Apply the wizard step e (brands/competitors) confirmation the same way the
+    # existing /api/projects/{pid}/apply-terms endpoint does — reused, not duplicated:
+    # each confirmed variant/brand becomes its own keyword structure, brands are added
+    # to competitors, and News feeds are regenerated to include them immediately.
+    if term_exp.get("variants") or term_exp.get("brands"):
+        import term_expansion
+        cfg = term_expansion.apply_expansion(
+            cfg, (term_exp.get("term") or "").strip() or cfg.get("product", {}).get("category", ""),
+            variants=term_exp.get("variants") or [], brands=term_exp.get("brands") or [],
+            translations=term_exp.get("translations") or {},
+        )
+        cfg = config_mod.regenerate_news_feeds(cfg)
+        storage.update_project_config(pid, cfg, None)
+
+    category = cfg.get("product", {}).get("category", "")
+    relevance_terms = cfg.get("relevance_terms") or ([category] if category else [])
+
+    run_id = None
+    if generic_domains and category:
+        run_id = storage.start_run(
+            pid, "generic_site",
+            {"category": category, "seed_domains": generic_domains, "keywords": keywords},
+            triggered_by=user, job_kind="backfill",
+        )
+        # site_intelligence is confirmed here (not earlier) so nothing is written to the
+        # global cross-project ledger until the human's final launch action, matching every
+        # other module's "confirm is the only write path" contract.
+        import site_intelligence
+        site_intelligence.confirm_sites(category, generic_domains)
+
+        def _run_job():
+            try:
+                discovery_pipeline.run_source_type_job(
+                    pid, category, generic_domains, keywords=keywords,
+                    relevance_terms=relevance_terms, per_source_cap=volume_cap,
+                    job_kind="backfill", run_id=run_id, triggered_by=user,
+                )
+            except Exception:
+                pass  # the run row itself already records failure state; never crash the thread
+
+        threading.Thread(target=_run_job, daemon=True, name=f"discovery-job-{run_id}").start()
+
+    storage.audit("discovery.launch",
+                  f"launched study '{project['name']}'" + (f" + generic-site job {run_id}" if run_id else ""),
+                  acting_user=user, project_id=pid)
+    return {"project_id": pid, "name": project["name"], "run_id": run_id,
+            "run_daily_requested": run_daily}  # daily scheduling itself: not wired yet, see §9
 
 
 @app.post("/api/projects/wizard")
