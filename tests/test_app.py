@@ -235,6 +235,39 @@ def test_apply_terms_rejects_empty_term(client, monkeypatch):
     assert r2.status_code == 400
 
 
+def test_suggest_outlets_calls_discovery_module(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+
+    import outlet_discovery
+
+    def fake_suggest(cfg, **kw):
+        return {"outlets": [{"name": "Scroll.in", "domain": "scroll.in", "category": "news",
+                             "language": "en", "why": "x", "caution": False}],
+                "_summary": {"total": 1, "caution": 0, "by_category": {"news": 1}}}
+
+    monkeypatch.setattr(outlet_discovery, "suggest_outlets", fake_suggest)
+    r2 = client.post(f"/api/projects/{pid}/suggest-outlets")
+    assert r2.status_code == 200
+    assert r2.json()["outlets"][0]["name"] == "Scroll.in"
+
+
+def test_apply_outlets_adds_to_market_terms(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+    before = len(r.json()["config"]["market"]["market_terms"])
+
+    r2 = client.post(f"/api/projects/{pid}/apply-outlets", json={"names": ["Scroll.in", "NDTV"]})
+    assert r2.status_code == 200
+    assert r2.json()["market_terms_count"] == before + 2
+
+    r3 = client.get(f"/api/projects/{pid}")
+    assert "Scroll.in" in r3.json()["config"]["market"]["market_terms"]
+    assert "NDTV" in r3.json()["config"]["market"]["market_terms"]
+
+
 def test_health_reports_key_presence_not_values(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     import settings as settings_mod

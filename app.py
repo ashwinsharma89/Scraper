@@ -329,6 +329,40 @@ def api_apply_terms(pid: int, body: Dict[str, Any], user: str = Depends(require_
     }
 
 
+@app.post("/api/projects/{pid}/suggest-outlets")
+def api_suggest_outlets(pid: int, user: str = Depends(require_user)):
+    """AI-suggest real local outlets (news, lifestyle, business, tech, sports, regional —
+    not just hard news) for this project's market+languages, so the market-relevance gate
+    can recognize them even though most don't carry the country's name in their own brand.
+
+    Returns candidates only — nothing is written until confirmed via /apply-outlets.
+    """
+    p = _project_or_404(pid)
+    import outlet_discovery
+    try:
+        result = outlet_discovery.suggest_outlets(p["config"])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    storage.audit("outlets.suggest", "AI local-outlet discovery run", acting_user=user, project_id=pid)
+    return result
+
+
+@app.post("/api/projects/{pid}/apply-outlets")
+def api_apply_outlets(pid: int, body: Dict[str, Any], user: str = Depends(require_user)):
+    """Apply a user-CONFIRMED subset of /suggest-outlets' output: each selected outlet name
+    is added to market.market_terms so the news market gate recognizes it as in-market on
+    its own. No feed regeneration needed — this only affects relevance filtering."""
+    p = _project_or_404(pid)
+    body = body or {}
+    names = body.get("names") or []
+    import outlet_discovery
+    new_cfg = outlet_discovery.apply_outlets(p["config"], names)
+    storage.update_project_config(pid, new_cfg, None)
+    storage.audit("outlets.apply", f"Added {len(names)} local outlet(s) to market terms",
+                  acting_user=user, project_id=pid)
+    return {"ok": True, "market_terms_count": len(new_cfg["market"]["market_terms"])}
+
+
 @app.post("/api/projects/{pid}/feed-health")
 def api_feed_health(pid: int, body: Dict[str, Any] = None, user: str = Depends(require_user)):
     p = _project_or_404(pid)

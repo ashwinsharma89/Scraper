@@ -389,12 +389,24 @@ function viewSources(root) {
       <button id="expand-term-btn" style="align-self:flex-end;height:2.1rem">✨ Expand</button>
     </div>
     <div id="expand-results"></div>
+  </div>
+  <div class="card"><h3>✨ Discover local outlets (AI)</h3>
+    <p class="muted">The market filter only keeps items whose outlet or text shows a signal
+      they're in this market — but most real local outlets (Scroll.in, NDTV, ScoopWhoop...)
+      don't carry the country's name in their own brand, unlike "Times of India"/"Indian
+      Express". This finds real local outlets across news, business, tech, sports,
+      lifestyle, culture, and regional/native-language press, so genuinely local coverage
+      from them stops being wrongly dropped. Each one you add teaches the filter that
+      outlet, market-wide — no feed changes, this only affects relevance filtering.</p>
+    <button id="discover-outlets-btn">✨ Discover outlets for this market</button>
+    <div id="discover-results"></div>
   </div>`;
 
   el("save-sources").addEventListener("click", saveSources);
   el("feed-health").addEventListener("click", runFeedHealth);
   el("suggest-sources").addEventListener("click", suggestSources);
   el("expand-term-btn").addEventListener("click", expandTerm);
+  el("discover-outlets-btn").addEventListener("click", discoverOutlets);
 }
 
 // --------------------------------------------------------------------------- //
@@ -546,6 +558,60 @@ async function applySelectedExpansion(term) {
       method: "POST", body: { term, variants, brands, translations },
     });
     toast(`Added — ${r.google_news_feeds} Google News + ${r.bing_news_feeds} Bing News feed(s) total now.`);
+    State.project = await api(`/api/projects/${State.projectId}`);
+    render();
+  } catch (e) { toast(e.message, true); }
+}
+
+// --------------------------------------------------------------------------- //
+// AI local-outlet discovery
+// --------------------------------------------------------------------------- //
+async function discoverOutlets() {
+  const box = el("discover-results");
+  box.innerHTML = `<div class="note">Asking Claude for real local outlets across news,
+    business, tech, sports, lifestyle, and regional press for
+    <b>${esc((State.project.config.market||{}).country||'')}</b>…
+    (needs ANTHROPIC_API_KEY; ~10–20s)</div>`;
+  try {
+    const r = await api(`/api/projects/${State.projectId}/suggest-outlets`, { method: "POST" });
+    renderOutletSuggestions(r);
+  } catch (e) {
+    box.innerHTML = `<div class="note">Could not discover outlets: ${esc(e.message)}
+      ${/ANTHROPIC/i.test(e.message) ? "— set the key in .env and restart." : ""}</div>`;
+  }
+}
+
+function renderOutletSuggestions(r) {
+  const rows = (r.outlets || []).map(o => `
+    <label style="display:flex;gap:.5rem;align-items:flex-start;font-weight:400;margin:.25rem 0">
+      <input type="checkbox" data-outlet value="${esc(o.name)}" ${o.caution ? "" : "checked"} style="width:auto;margin-top:.2rem" />
+      <span><b>${esc(o.name)}</b>
+        ${o.caution ? '<span class="flag">⚠ short name — check before adding</span>' : ""}
+        <span class="badge neu">${esc(o.category || "—")}</span>
+        <span class="badge neu">${esc(o.language || "—")}</span>
+        <br><span class="muted">${esc(o.domain || "")}${o.why ? " — " + esc(o.why) : ""}</span></span>
+    </label>`).join("");
+
+  const s = r._summary || {};
+  el("discover-results").innerHTML = `<div class="card" style="border-color:var(--navy)">
+    <div class="card-head"><h4>✨ ${s.total || 0} local outlets found</h4>
+      <button id="apply-outlets">Add checked to market terms</button></div>
+    <p class="muted">AI-proposed — nothing is added until you click above.
+      ${s.caution ? `${s.caution} short name(s) are unchecked by default — a brief name
+      that's also a common word is safer to review before trusting at scale.` : ""}</p>
+    ${rows || `<p class="muted">Nothing came back — try again in a moment.</p>`}
+  </div>`;
+  const btn = el("apply-outlets");
+  if (btn) btn.addEventListener("click", applySelectedOutlets);
+}
+
+async function applySelectedOutlets() {
+  const names = Array.from(document.querySelectorAll("[data-outlet]:checked")).map(cb => cb.value);
+  try {
+    const r = await api(`/api/projects/${State.projectId}/apply-outlets`, {
+      method: "POST", body: { names },
+    });
+    toast(`Added ${names.length} outlet(s) — ${r.market_terms_count} market term(s) total now.`);
     State.project = await api(`/api/projects/${State.projectId}`);
     render();
   } catch (e) { toast(e.message, true); }
