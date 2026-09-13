@@ -20,9 +20,25 @@ from typing import Any, Dict, List, Optional
 # Philippines -> Filipino, UK -> British, Netherlands -> Dutch), so an article that only
 # says "the French government..." would silently fail an country-name-only substring
 # check. Malaysia happens to work by luck (Malaysia -> Malaysian); most countries don't.
-COUNTRY_TABLE: Dict[str, Dict[str, str]] = {
+COUNTRY_TABLE: Dict[str, Dict[str, Any]] = {
     "singapore": {"name": "Singapore", "iso": "SG", "gdelt": "SN", "demonym": "Singaporean"},
-    "india": {"name": "India", "iso": "IN", "gdelt": "IN", "demonym": "Indian"},
+    # native_names: the country's own name in specific languages, keyed by ISO 639-1 code.
+    # Real gap this closes: the news market filter (scrapers/news.py market_signal) only
+    # matched market_terms as a literal substring against the article's text — for an
+    # ENGLISH article "India"/"Indian" works, but a NATIVE-SCRIPT article (Telugu, Tamil,
+    # Kannada, ...) essentially never contains that Latin-script substring, and most
+    # regional Indian outlets use .com, not .in, so the ccTLD fallback misses them too.
+    # Verified live: genuine India-published Telugu coffee articles from tv9telugu.com,
+    # Asianet News Telugu, ETV Bharat, Andhrajyothy were being dropped as "off-market"
+    # for exactly this reason. Only populated where confidently known — an unpopulated
+    # country/language combo just gets no native term added (graceful, not a crash),
+    # same fallback pattern as demonym.
+    "india": {"name": "India", "iso": "IN", "gdelt": "IN", "demonym": "Indian",
+              "native_names": {
+                  "hi": "भारत", "mr": "भारत", "gu": "ભારત", "pa": "ਭਾਰਤ",
+                  "ta": "இந்தியா", "te": "భారత్", "kn": "ಭಾರತ", "ml": "ഇന്ത്യ",
+                  "bn": "ভারত", "ur": "بھارت",
+              }},
     "united states": {"name": "United States", "iso": "US", "gdelt": "US", "demonym": "American"},
     "usa": {"name": "United States", "iso": "US", "gdelt": "US", "demonym": "American"},
     "united kingdom": {"name": "United Kingdom", "iso": "GB", "gdelt": "UK", "demonym": "British"},
@@ -168,7 +184,7 @@ def resolve_country(country: str) -> Dict[str, str]:
         return dict(COUNTRY_TABLE[key])
     # Unknown -> placeholder the user must fill. Never fabricate a code or a demonym.
     return {"name": country.strip() or "Unknown", "iso": "", "gdelt": "", "demonym": "",
-            "needs_confirmation": "true"}
+            "native_names": {}, "needs_confirmation": "true"}
 
 
 def list_countries() -> List[Dict[str, str]]:
@@ -499,13 +515,21 @@ def run_wizard(intake: Dict[str, Any]) -> Dict[str, Any]:
             "gdelt_country": country_info.get("gdelt", ""),
             "languages": languages,
             # Used by the news market-gate to drop off-market results (e.g. Indian
-            # coverage in a Malaysia study). Includes both the country name AND its
-            # demonym — for most countries the demonym is NOT a substring of the name
-            # (France -> French, Philippines -> Filipino, UK -> British), so relying on
-            # the country name alone silently misses demonym-only mentions. Add
-            # cities/regions in Source plan to sharpen further.
+            # coverage in a Malaysia study). Includes the country name, its demonym —
+            # for most countries the demonym is NOT a substring of the name (France ->
+            # French, Philippines -> Filipino, UK -> British), so relying on the country
+            # name alone silently misses demonym-only mentions — AND the country's own
+            # native-script name for each of the study's configured languages, where
+            # known (country_info["native_names"]). Without this, a native-script
+            # article (Telugu, Tamil, ...) almost never contains the Latin-script
+            # "India"/"Indian" and gets wrongly dropped as off-market even when it's
+            # genuinely India-published content (verified live). Add cities/regions in
+            # Source plan to sharpen further.
             "cctld": f".{iso.lower()}" if iso else "",
-            "market_terms": [t for t in [country_info.get("name", ""), country_info.get("demonym", "")] if t],
+            "market_terms": [t for t in (
+                [country_info.get("name", ""), country_info.get("demonym", "")]
+                + [country_info.get("native_names", {}).get(l, "") for l in languages]
+            ) if t],
         },
         "product": {
             "brand": brand,

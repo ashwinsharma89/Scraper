@@ -78,6 +78,35 @@ def test_wizard_unknown_country_market_terms_dont_crash():
     assert cfg["market"]["market_terms"] == ["Atlantis"]  # no fabricated demonym
 
 
+def test_wizard_market_terms_include_native_script_country_name():
+    """Real gap this closes: a native-script article (Telugu, Tamil, ...) essentially
+    never contains the Latin-script "India"/"Indian", so without this it gets wrongly
+    dropped as off-market even when genuinely India-published (verified live against
+    real Telugu-language coffee articles from tv9telugu.com / ETV Bharat / Andhrajyothy)."""
+    cfg = config.run_wizard({
+        "market": {"country": "India", "languages": ["en", "te", "ta", "hi"]},
+        "product": {"brand": "", "category": "coffee", "category_type": "fmcg_food"},
+    })
+    terms = cfg["market"]["market_terms"]
+    assert "India" in terms and "Indian" in terms
+    assert "భారత్" in terms  # Telugu
+    assert "இந்தியா" in terms  # Tamil
+    assert "भारत" in terms  # Hindi
+    # Only the STUDY's configured languages contribute a native term — Gujarati wasn't
+    # configured here, so its native name must not appear even though it's in the table.
+    assert "ભારત" not in terms
+
+
+def test_wizard_market_terms_native_name_absent_for_unconfigured_country():
+    # A country with no native_names entry (everything except India, currently) must
+    # degrade gracefully — no crash, no fabricated term.
+    cfg = config.run_wizard({
+        "market": {"country": "Malaysia", "languages": ["en", "zh"]},
+        "product": {"brand": "Maggi", "category": "instant noodles", "category_type": "fmcg_food"},
+    })
+    assert cfg["market"]["market_terms"] == ["Malaysia", "Malaysian"]
+
+
 def test_bing_news_url_builder():
     url = config.build_bing_news_url(["Acme Cola", "cola price"], "en-SG")
     parsed, qs = _parse_qs(url)
