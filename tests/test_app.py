@@ -108,6 +108,48 @@ def test_reference_languages_backs_the_wizard_dropdown(client, monkeypatch):
     assert all(l.get("code") and l.get("name") for l in langs)
 
 
+def test_reference_countries_backs_the_wizard_dropdown(client, monkeypatch):
+    # Powers the intake wizard's single/multi-select country/region picker.
+    monkeypatch.setenv("MODE", "solo")
+    r = client.get("/api/reference/countries")
+    assert r.status_code == 200
+    countries = r.json()
+    names = [c["name"] for c in countries]
+    assert len(names) == len(set(names))  # deduped despite COUNTRY_TABLE alias keys
+    assert "Malaysia" in names and "United States" in names
+
+
+def test_wizard_rejects_more_than_one_country(client, monkeypatch):
+    # The picker's control allows multi-select for interaction consistency with
+    # languages, but a study targets exactly one market — enforced server-side too.
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["market"]["country"] = ["Malaysia", "Singapore"]
+    r = client.post("/api/projects/wizard", json=intake)
+    assert r.status_code == 400
+    assert "one country" in r.json()["detail"].lower()
+
+
+def test_wizard_accepts_single_country_as_a_one_item_list(client, monkeypatch):
+    # The frontend always submits country as a list (from the multi-select); a
+    # single-item list is the normal case and must be normalized to a plain string.
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["market"]["country"] = ["Malaysia"]
+    r = client.post("/api/projects/wizard", json=intake)
+    assert r.status_code == 200
+    assert r.json()["config"]["market"]["country"] == "Malaysia"
+
+
+def test_wizard_rejects_empty_country(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["market"]["country"] = ""
+    r = client.post("/api/projects/wizard", json=intake)
+    assert r.status_code == 400
+    assert "country" in r.json()["detail"].lower()
+
+
 def test_health_reports_key_presence_not_values(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     import settings as settings_mod

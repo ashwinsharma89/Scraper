@@ -158,6 +158,19 @@ def test_wizard_scaffolds_empty_native_language_slots():
     assert by_lang["en"]["brand"] == ["Zeta"]
 
 
+def test_list_countries_dedupes_aliases_and_is_sorted():
+    """Backs the intake wizard's country/region picker. COUNTRY_TABLE has alias keys
+    ("usa" and "united states" both resolve to the same country) — the picker must not
+    show the same country twice."""
+    countries = config.list_countries()
+    names = [c["name"] for c in countries]
+    assert len(names) == len(set(names))  # no duplicates despite alias keys
+    assert names == sorted(names)  # alphabetical for scanning
+    assert "United States" in names and "usa" not in names and "United Kingdom" in names
+    malaysia = next(c for c in countries if c["name"] == "Malaysia")
+    assert malaysia["iso"] == "MY"
+
+
 def test_list_languages_is_a_defensive_copy():
     """Backs the intake wizard's language dropdown. Must return a fresh copy each call —
     a caller mutating the result must never corrupt the module-level reference table."""

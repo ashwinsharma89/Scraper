@@ -171,6 +171,21 @@ def resolve_country(country: str) -> Dict[str, str]:
             "needs_confirmation": "true"}
 
 
+def list_countries() -> List[Dict[str, str]]:
+    """Return the country reference table for the intake wizard's picker (single- and
+    multi-select — though a study itself targets one market; see run_wizard/api_wizard).
+
+    COUNTRY_TABLE has alias keys ("usa" and "united states" both resolve to the same
+    country) — this dedupes by canonical name so the dropdown never shows the same
+    country twice, sorted alphabetically for scanning. A country typed into the "other"
+    field that isn't in this list still works end-to-end via resolve_country()'s
+    graceful fallback — this table is a convenience picker, not a closed set."""
+    seen: Dict[str, Dict[str, str]] = {}
+    for row in COUNTRY_TABLE.values():
+        seen[row["name"]] = {"name": row["name"], "iso": row["iso"]}
+    return sorted(seen.values(), key=lambda r: r["name"])
+
+
 # --------------------------------------------------------------------------- #
 # Google News search-feed URL builder
 # --------------------------------------------------------------------------- #

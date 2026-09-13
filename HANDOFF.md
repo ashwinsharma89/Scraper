@@ -33,7 +33,7 @@ context. Read `README.md` for the product overview; this file is the *engineerin
 cd /Users/ashwin/Desktop/marketlens
 source .venv/bin/activate              # venv already exists (Python 3.13)
 python app.py                          # http://localhost:8000
-python -m pytest -q                    # 133 tests, all should pass, ~1.3s (network mocked)
+python -m pytest -q                    # 138 tests, all should pass, ~1.5s (network mocked)
 python seed_demo.py                    # (re)create the Acme Cola / Singapore demo project
 ```
 
@@ -92,6 +92,21 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   field alongside it covers anything not in the list, so no language is ever unreachable.
   Live-verified in the browser: selected Bulgarian + Croatian via click + Cmd-click,
   submitted, and the created project's config carried exactly `["bg","hr"]`.
+- **Country/region picker**: same `<select multiple>` treatment, backed by
+  `config.COUNTRY_TABLE`/`list_countries()` (deduped by canonical name — the table has
+  alias keys like `"usa"`/`"united states"` that must not show as two dropdown rows) via
+  `GET /api/reference/countries`, plus a free-text "other" field for anything not listed.
+  Unlike languages, a study targets exactly ONE market — every downstream consumer
+  (`config.py`'s GDELT/Google News/ccTLD/market_terms generation) expects `market.country`
+  as a single string, not a list — so more than one selection is a hard reject, not a
+  silent pick-one: enforced in `app.py`'s `/api/projects/wizard` (a single-item list is
+  normalized to a plain string; 2+ items → 400) AND in the form's JS for fast feedback.
+  Live-verified in the browser end-to-end, including the rejection path: selecting
+  Australia + Brazil and submitting produced the toast "A study targets one
+  country/region — you selected 2 (Australia, Brazil). Pick just one." with nothing
+  sent to the server; correcting to a single "Canada" click then submitting produced
+  `market.country: "Canada"` (normalized from the one-item list) with the full pipeline
+  (ISO/GDELT/ccTLD/market_terms/News feeds) built correctly from it.
 - Demo: `seed_demo.py` (Acme Cola / Singapore — fictional, no fabricated data).
 - **Four structural gaps closed** (a dedicated session pass — see §11 for design rationale
   on each; all live-verified against real Malaysia/Maggi data, not just unit tests):

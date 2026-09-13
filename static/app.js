@@ -135,7 +135,23 @@ async function loadLanguageOptions() {
     // Non-fatal — the "Other language codes" free-text field still works without this.
   }
 }
-function openWizard() { el("wizard-modal").classList.remove("hidden"); loadLanguageOptions(); }
+let _countryOptionsLoaded = false;
+async function loadCountryOptions() {
+  if (_countryOptionsLoaded) return;
+  const sel = el("wizard-countries");
+  try {
+    const countries = await api("/api/reference/countries");
+    sel.innerHTML = countries.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
+    _countryOptionsLoaded = true;
+  } catch (e) {
+    // Non-fatal — the "Other country/region" free-text field still works without this.
+  }
+}
+function openWizard() {
+  el("wizard-modal").classList.remove("hidden");
+  loadLanguageOptions();
+  loadCountryOptions();
+}
 el("new-project-btn").addEventListener("click", openWizard);
 el("empty-new-btn").addEventListener("click", openWizard);
 document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () =>
@@ -151,13 +167,29 @@ el("wizard-form").addEventListener("submit", async (e) => {
     toast("Provide a brand name, a product category, or both.", true);
     return;
   }
+  // Country picker allows multi-select (same control as languages, for interaction
+  // consistency), but a study targets exactly one market — so more than one selection
+  // (dropdown pick(s) + the free-text "other" field) is rejected rather than silently
+  // collapsed to one, which would quietly use a country the user didn't clearly intend.
+  const otherCountry = (f.get("country_other") || "").trim();
+  const pickedCountries = f.getAll("country").map(x => x.trim()).filter(Boolean);
+  const countryCandidates = [...pickedCountries, ...(otherCountry ? [otherCountry] : [])];
+  if (countryCandidates.length === 0) {
+    toast("Select a country/region, or type one in \"Other\".", true);
+    return;
+  }
+  if (countryCandidates.length > 1) {
+    toast(`A study targets one country/region — you selected ${countryCandidates.length} `
+      + `(${countryCandidates.join(", ")}). Pick just one.`, true);
+    return;
+  }
   // Selected dropdown languages (supports single AND multi-select) + any free-text
   // "other" codes for languages not in the reference list, de-duped.
   const picked = f.getAll("languages").map(x => x.trim()).filter(Boolean);
   const languages = [...new Set([...picked, ...csv("languages_other")])];
   const intake = {
     name: brand || category,
-    market: { country: f.get("country"), languages: languages.length ? languages : ["en"] },
+    market: { country: countryCandidates[0], languages: languages.length ? languages : ["en"] },
     product: { brand, parent_company: f.get("parent_company"),
                category, category_type: f.get("category_type") },
     competitors: csv("competitors"),

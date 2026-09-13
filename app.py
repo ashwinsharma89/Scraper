@@ -159,6 +159,13 @@ def api_reference_languages(user: str = Depends(require_user)):
     return config_mod.list_languages()
 
 
+@app.get("/api/reference/countries")
+def api_reference_countries(user: str = Depends(require_user)):
+    """Backs the intake wizard's country/region picker (single- and multi-select control;
+    a study itself still targets one market — enforced in api_wizard below)."""
+    return config_mod.list_countries()
+
+
 @app.get("/api/projects")
 def api_projects(user: str = Depends(require_user)):
     return storage.list_projects()
@@ -173,6 +180,21 @@ def api_wizard(intake: Dict[str, Any], user: str = Depends(require_user)):
     if not (product.get("brand") or "").strip() and not (product.get("category") or "").strip():
         raise HTTPException(status_code=400,
                              detail="Provide a brand name, a product category, or both.")
+    # A study targets exactly one market. The intake form's country control allows
+    # multi-select (same widget as languages, for interaction consistency), but a study's
+    # country field itself is a single string throughout config.py/GDELT/Google News/etc —
+    # so more than one value here means the form's own guard was bypassed (e.g. a direct
+    # API call). Reject rather than silently pick one.
+    market = intake.get("market") or {}
+    intake["market"] = market
+    country_val = market.get("country")
+    if isinstance(country_val, list):
+        if len(country_val) != 1:
+            raise HTTPException(status_code=400,
+                                 detail="A study targets exactly one country/region.")
+        market["country"] = country_val[0]
+    if not (market.get("country") or "").strip():
+        raise HTTPException(status_code=400, detail="Country/region is required.")
     cfg = config_mod.run_wizard(intake)
     name = intake.get("name") or cfg["product"]["brand"] or cfg["product"]["category"] or "Untitled study"
     pid = storage.create_project(name, cfg)

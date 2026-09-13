@@ -61,7 +61,12 @@
       <div class="card-head"><h2>New study — intake wizard</h2><button class="x" data-close>×</button></div>
       <form id="wizard-form">
         <fieldset><legend>Market</legend>
-          <label>Country / region <input name="country" placeholder="e.g. Singapore" required /></label>
+          <label>Country / region
+            <select name="country" id="wizard-countries" multiple size="6"></select></label>
+          <p class="muted">A study targets one market — click to select it. (Cmd/Ctrl-click
+            also works, but only one country per study is allowed.)</p>
+          <label>Other country/region (optional — if not in the list above)
+            <input name="country_other" placeholder="e.g. Luxembourg" /></label>
           <label>Target languages
             <select name="languages" id="wizard-languages" multiple size="8"></select></label>
           <p class="muted">Click to select one, or Cmd/Ctrl-click (Shift-click for a range)
