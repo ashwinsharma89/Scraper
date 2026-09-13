@@ -281,6 +281,54 @@ def api_suggest_sources(pid: int, user: str = Depends(require_user)):
     return result
 
 
+@app.post("/api/projects/{pid}/suggest-terms")
+def api_suggest_terms(pid: int, body: Dict[str, Any], user: str = Depends(require_user)):
+    """AI-expand a narrow search term into product variants, real brand/shop names, and
+    per-language translations (e.g. "coffee" -> instant coffee, cold coffee, latte,
+    Starbucks, Costa Coffee, + native-script equivalents in the study's other languages).
+
+    Returns candidates only — nothing is written to keyword structures here; the user
+    confirms which to add via /apply-terms.
+    """
+    p = _project_or_404(pid)
+    term = (body or {}).get("term") or p["config"].get("product", {}).get("category", "")
+    import term_expansion
+    try:
+        result = term_expansion.suggest_terms(p["config"], term)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    storage.audit("terms.suggest", f"AI term expansion for '{term}'", acting_user=user, project_id=pid)
+    return result
+
+
+@app.post("/api/projects/{pid}/apply-terms")
+def api_apply_terms(pid: int, body: Dict[str, Any], user: str = Depends(require_user)):
+    """Apply a user-CONFIRMED subset of /suggest-terms' output: each selected variant/
+    brand/translation becomes its own keyword structure (own News feed), brands are added
+    to competitors, and Google/Bing News feeds are regenerated to reflect it immediately.
+    """
+    p = _project_or_404(pid)
+    body = body or {}
+    term = (body.get("term") or "").strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="term is required")
+    import term_expansion
+    new_cfg = term_expansion.apply_expansion(
+        p["config"], term,
+        variants=body.get("variants") or [],
+        brands=body.get("brands") or [],
+        translations=body.get("translations") or {},
+    )
+    new_cfg = config_mod.regenerate_news_feeds(new_cfg)
+    storage.update_project_config(pid, new_cfg, None)
+    storage.audit("terms.apply", f"Applied term expansion for '{term}'", acting_user=user, project_id=pid)
+    return {
+        "ok": True,
+        "google_news_feeds": len(new_cfg["source_plan"]["google_news_feeds"]),
+        "bing_news_feeds": len(new_cfg["source_plan"]["bing_news_feeds"]),
+    }
+
+
 @app.post("/api/projects/{pid}/feed-health")
 def api_feed_health(pid: int, body: Dict[str, Any] = None, user: str = Depends(require_user)):
     p = _project_or_404(pid)

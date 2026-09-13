@@ -183,6 +183,58 @@ def test_regenerate_feeds_picks_up_edited_keywords(client, monkeypatch):
     assert len(r3.json()["config"]["source_plan"]["google_news_feeds"]) == 2
 
 
+def test_suggest_terms_defaults_to_project_category(client, monkeypatch):
+    # No "term" in the body -> falls back to the project's own category.
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["product"] = {"brand": "", "category": "cola", "category_type": "fmcg_food"}
+    r = client.post("/api/projects/wizard", json=intake)
+    pid = r.json()["id"]
+
+    import term_expansion
+    seen = {}
+
+    def fake_suggest(cfg, term, **kw):
+        seen["term"] = term
+        return {"variants": ["diet cola"], "brands": ["Fizzly"], "translations": {},
+                "term": term, "_summary": {"variants": 1, "brands": 1, "translations": 0}}
+
+    monkeypatch.setattr(term_expansion, "suggest_terms", fake_suggest)
+    r2 = client.post(f"/api/projects/{pid}/suggest-terms", json={})
+    assert r2.status_code == 200
+    assert seen["term"] == "cola"
+    assert r2.json()["variants"] == ["diet cola"]
+
+
+def test_apply_terms_creates_feeds_and_updates_competitors(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["product"] = {"brand": "", "category": "coffee", "category_type": "fmcg_food"}
+    r = client.post("/api/projects/wizard", json=intake)
+    pid = r.json()["id"]
+
+    body = {
+        "term": "coffee",
+        "variants": ["instant coffee", "latte"],
+        "brands": ["Starbucks"],
+        "translations": {},
+    }
+    r2 = client.post(f"/api/projects/{pid}/apply-terms", json=body)
+    assert r2.status_code == 200
+    assert r2.json()["google_news_feeds"] == 4  # coffee + instant coffee + latte + Starbucks
+
+    r3 = client.get(f"/api/projects/{pid}")
+    assert "Starbucks" in r3.json()["config"]["competitors"]
+
+
+def test_apply_terms_rejects_empty_term(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+    r2 = client.post(f"/api/projects/{pid}/apply-terms", json={"term": "", "variants": ["x"]})
+    assert r2.status_code == 400
+
+
 def test_health_reports_key_presence_not_values(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     import settings as settings_mod

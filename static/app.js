@@ -375,11 +375,26 @@ function viewSources(root) {
       `<tr><td>${esc(f.language)}</td><td>${esc(f.structure)}</td><td>${esc(f.query)}</td></tr>`).join("") ||
       `<tr><td colspan="3" class="muted">No feeds — add native-language keyword terms below.</td></tr>`}</tbody></table></div>
   </div>
-  <div class="card"><h3>Keyword slots per language</h3>${keywordEditor()}</div>`;
+  <div class="card"><h3>Keyword slots per language</h3>${keywordEditor()}</div>
+  <div class="card"><h3>✨ Expand a term (AI)</h3>
+    <p class="muted">A single narrow term (e.g. "coffee") hides everything adjacent to it:
+      product variants (instant coffee, cold coffee, latte, cappuccino, americano...), real
+      brand/shop names people search for instead (Starbucks, Costa Coffee...), and
+      equivalents of all of that in this study's OTHER languages. Each one you add becomes
+      its own keyword structure — its own feed, its own ~100-result ceiling — so this is
+      also the main lever for a study's collectible volume, not just recall.</p>
+    <div class="row">
+      <label style="flex:1">Term to expand <span class="muted">defaults to the study's category</span>
+        <input id="expand-term" value="${esc((State.project.config.product||{}).category||'')}" placeholder="e.g. coffee" /></label>
+      <button id="expand-term-btn" style="align-self:flex-end;height:2.1rem">✨ Expand</button>
+    </div>
+    <div id="expand-results"></div>
+  </div>`;
 
   el("save-sources").addEventListener("click", saveSources);
   el("feed-health").addEventListener("click", runFeedHealth);
   el("suggest-sources").addEventListener("click", suggestSources);
+  el("expand-term-btn").addEventListener("click", expandTerm);
 }
 
 // --------------------------------------------------------------------------- //
@@ -456,6 +471,81 @@ async function addSelectedSources() {
   try {
     await api(`/api/projects/${State.projectId}/config`, { method: "PUT", body: { config: cfg } });
     toast(`Added ${added} source(s) to the plan`);
+    State.project = await api(`/api/projects/${State.projectId}`);
+    render();
+  } catch (e) { toast(e.message, true); }
+}
+
+// --------------------------------------------------------------------------- //
+// AI term expansion
+// --------------------------------------------------------------------------- //
+async function expandTerm() {
+  const term = (el("expand-term").value || "").trim();
+  const box = el("expand-results");
+  if (!term) { toast("Enter a term to expand", true); return; }
+  box.innerHTML = `<div class="note">Asking Claude to expand "${esc(term)}" into variants,
+    brands, and translations… (needs ANTHROPIC_API_KEY; ~10–20s)</div>`;
+  try {
+    const r = await api(`/api/projects/${State.projectId}/suggest-terms`, { method: "POST", body: { term } });
+    renderExpansion(r);
+  } catch (e) {
+    box.innerHTML = `<div class="note">Could not expand term: ${esc(e.message)}
+      ${/ANTHROPIC/i.test(e.message) ? "— set the key in .env and restart." : ""}</div>`;
+  }
+}
+
+function renderExpansion(r) {
+  const variantRows = (r.variants || []).map(v => `
+    <label style="display:flex;gap:.5rem;align-items:center;font-weight:400;margin:.2rem 0">
+      <input type="checkbox" data-exp-variant value="${esc(v)}" checked style="width:auto" />
+      <span>${esc(v)}</span></label>`).join("");
+  const brandRows = (r.brands || []).map(b => `
+    <label style="display:flex;gap:.5rem;align-items:center;font-weight:400;margin:.2rem 0">
+      <input type="checkbox" data-exp-brand value="${esc(b)}" checked style="width:auto" />
+      <span>${esc(b)} <span class="muted">(also added as a competitor)</span></span></label>`).join("");
+  const translationBlocks = Object.entries(r.translations || {}).map(([lang, entry]) => `
+    <div style="margin:.4rem 0">
+      <b>${esc(lang)}</b>
+      ${entry.term ? `<label style="display:flex;gap:.5rem;align-items:center;font-weight:400;margin:.15rem 0 .15rem 1rem">
+        <input type="checkbox" data-exp-translang="${esc(lang)}" value="${esc(entry.term)}" checked style="width:auto" />
+        <span>${esc(entry.term)} <span class="muted">(base term)</span></span></label>` : ""}
+      ${(entry.variants || []).map(v => `
+        <label style="display:flex;gap:.5rem;align-items:center;font-weight:400;margin:.15rem 0 .15rem 1rem">
+          <input type="checkbox" data-exp-transvar="${esc(lang)}" value="${esc(v)}" checked style="width:auto" />
+          <span>${esc(v)}</span></label>`).join("")}
+    </div>`).join("");
+
+  el("expand-results").innerHTML = `<div class="card" style="border-color:var(--navy)">
+    <div class="card-head"><h4>✨ Expansion of "${esc(r.term)}"</h4>
+      <button id="apply-expand">Add checked to keywords</button></div>
+    <p class="muted">AI-proposed — nothing is added until you click above. Uncheck anything
+      irrelevant or wrong; a brand you check is also added to Competitors.</p>
+    ${variantRows ? `<h5>Product variants (${(r.variants||[]).length})</h5>${variantRows}` : ""}
+    ${brandRows ? `<h5 style="margin-top:.6rem">Real brands/shops in this market (${(r.brands||[]).length})</h5>${brandRows}` : ""}
+    ${translationBlocks ? `<h5 style="margin-top:.6rem">Translations (${Object.keys(r.translations||{}).length} language(s))</h5>${translationBlocks}` : ""}
+    ${!variantRows && !brandRows && !translationBlocks ? `<p class="muted">Nothing came back — try a different term.</p>` : ""}
+  </div>`;
+  el("apply-expand").addEventListener("click", () => applySelectedExpansion(r.term));
+}
+
+async function applySelectedExpansion(term) {
+  const variants = Array.from(document.querySelectorAll("[data-exp-variant]:checked")).map(cb => cb.value);
+  const brands = Array.from(document.querySelectorAll("[data-exp-brand]:checked")).map(cb => cb.value);
+  const translations = {};
+  document.querySelectorAll("[data-exp-translang]:checked").forEach(cb => {
+    const lang = cb.dataset.expTranslang;
+    (translations[lang] = translations[lang] || { term: "", variants: [] }).term = cb.value;
+  });
+  document.querySelectorAll("[data-exp-transvar]:checked").forEach(cb => {
+    const lang = cb.dataset.expTransvar;
+    const entry = (translations[lang] = translations[lang] || { term: "", variants: [] });
+    entry.variants.push(cb.value);
+  });
+  try {
+    const r = await api(`/api/projects/${State.projectId}/apply-terms`, {
+      method: "POST", body: { term, variants, brands, translations },
+    });
+    toast(`Added — ${r.google_news_feeds} Google News + ${r.bing_news_feeds} Bing News feed(s) total now.`);
     State.project = await api(`/api/projects/${State.projectId}`);
     render();
   } catch (e) { toast(e.message, true); }

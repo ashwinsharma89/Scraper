@@ -33,7 +33,7 @@ context. Read `README.md` for the product overview; this file is the *engineerin
 cd /Users/ashwin/Desktop/marketlens
 source .venv/bin/activate              # venv already exists (Python 3.13)
 python app.py                          # http://localhost:8000
-python -m pytest -q                    # 138 tests, all should pass, ~1.5s (network mocked)
+python -m pytest -q                    # 162 tests, all should pass, ~1.4s (network mocked)
 python seed_demo.py                    # (re)create the Acme Cola / Singapore demo project
 ```
 
@@ -55,6 +55,7 @@ Docker path also works: `docker compose up`. Non-Docker setup scripts: `setup.sh
 | `analytics.py` | Aggregations, **every result carries `n`** + low-confidence flag (<100) |
 | `market_intel.py` | Cited layer (enforced citations) + Manual Intelligence (Tier-2 deep links) |
 | `source_discovery.py` | **AI source suggestions** + validation + RSS autodiscovery |
+| `term_expansion.py` | **AI term expansion** — variants/brands/translations for a narrow term |
 | `export.py` | Styled Excel (all tabs + "All Items" combined tab + version stamp) |
 | `report.py` | 5-pillar Markdown draft + `.md`/`.docx` file outputs |
 | `auth.py` / `archive.py` / `scheduler.py` | Team auth / project `.mlz` export-import / recurring runs |
@@ -82,6 +83,28 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   Run Log/**All Items**/per-channel), version-stamped; Report draft (Markdown + Word/.docx).
 - **News market filter** (drops off-market items via outlet ccTLD/market terms) — big win.
 - **AI source discovery** (Source plan → "✨ Suggest sources") with validation + RSS autodiscovery.
+- **AI term expansion** (`term_expansion.py`; Source plan → "✨ Expand a term") — closes a
+  real precision AND volume gap: a narrow everyday term (e.g. "coffee") hides product
+  variants (instant coffee, cold coffee, latte, cappuccino, americano...), real brand/shop
+  names people search for instead (Starbucks, Costa Coffee, ...), and equivalents of all
+  of that in the study's OTHER configured languages — so a naive single-keyword study
+  only ever sees the one literal word typed in. Same suggestion+validation posture as AI
+  source discovery: Claude proposes, nothing is written until the user reviews and
+  confirms via `POST .../apply-terms`. Each confirmed variant/brand/translation becomes
+  its OWN keyword structure (own News feed, own ~100-result ceiling — the mechanic
+  `config.regenerate_news_feeds` already relies on), and brands are also added to
+  `competitors` so the existing `brand_focus` analysis tagging picks them up for free.
+  Live-verified end-to-end against a real India/coffee study (project #14): the LLM
+  returned 12 genuine variants (instant/cold/filter coffee, cappuccino, espresso, iced/
+  black coffee, ...), 12 real India-specific brands (Nescafé, Bru, CCD, Blue Tokai,
+  Starbucks, Café Coffee Day, Lavazza, Indian Coffee House, Araku, Twenty Third Street
+  Coffee, ...) — not generic global names — and correct native-script translations across
+  all 8 non-English configured languages (e.g. Hindi: कॉफी / इंस्टेंट कॉफी / कोल्ड कॉफी).
+  Applying the selections took the project from 15+15 to **87 Google News + 87 Bing News
+  feeds**. A non-Latin-script structure-key collision bug was caught and fixed before
+  shipping: two different Hindi variants both slugged to the generic key "term" and would
+  have silently overwritten each other — `term_expansion._slug()` now falls back to the
+  item's list index when the text has no [a-z0-9] to slug from, guaranteeing uniqueness.
 - Distribution: team auth, archive import/export, scheduler, Docker, setup scripts, README.
 - SPA: 4-step workflow stepper, per-tab help, key-detection chips, **Items browser** (filter
   by channel/brand_focus/sentiment/search), Collect market toggle.
