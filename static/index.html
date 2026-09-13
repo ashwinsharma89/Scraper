@@ -4,12 +4,15 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MarketLens</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <div id="login-overlay" class="overlay hidden">
     <form id="login-form" class="card login-card">
-      <h2>MarketLens — Sign in</h2>
+      <h2>MarketLens</h2>
       <p class="muted">Team mode is active. Enter your credentials.</p>
       <label>Username <input name="username" autocomplete="username" required /></label>
       <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
@@ -18,44 +21,65 @@
     </form>
   </div>
 
-  <header class="topbar">
-    <div class="brand">MarketLens <span class="tag">market &amp; product intelligence</span></div>
-    <div class="topbar-right">
-      <select id="project-select" title="Active project"></select>
-      <button id="new-project-btn" class="ghost">+ New study</button>
-      <button id="new-discovery-btn" class="ghost">+ AI-guided study</button>
-      <span id="user-chip" class="chip hidden"></span>
-      <button id="logout-btn" class="ghost hidden">Sign out</button>
-    </div>
-  </header>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="mark">M</span>
+        <div class="brand-text"><span class="brand-name">MarketLens</span>
+          <span class="brand-tag">market &amp; product intelligence</span></div>
+      </div>
 
-  <nav class="tabs" id="tabs">
-    <button data-view="overview" class="active">Overview</button>
-    <button data-view="sources">Source plan</button>
-    <button data-view="collect">Collect</button>
-    <button data-view="runlog">Run log</button>
-    <button data-view="results">Results dashboard</button>
-    <button data-view="items">Items</button>
-    <button data-view="analysis">Analysis</button>
-    <button data-view="intel">Market intel</button>
-    <button data-view="manual">Manual intel</button>
-    <button data-view="schedules">Schedules</button>
-    <button data-view="export">Export &amp; report</button>
-  </nav>
+      <nav class="tabs" id="tabs">
+        <button data-view="overview" class="active">Overview</button>
+        <button data-view="sources">Source plan</button>
+        <button data-view="collect">Collect</button>
+        <button data-view="runlog">Run log</button>
+        <button data-view="results">Results dashboard</button>
+        <button data-view="items">Items</button>
+        <button data-view="analysis">Analysis</button>
+        <button data-view="intel">Market intel</button>
+        <button data-view="manual">Manual intel</button>
+        <button data-view="schedules">Schedules</button>
+        <button data-view="export">Export &amp; report</button>
+      </nav>
 
-  <main id="main">
-    <div id="workflow" class="workflow hidden"></div>
-    <div id="empty-state" class="card">
-      <h2>Welcome to MarketLens</h2>
-      <p>Create a study to begin. Nothing here is hard-coded to any brand, category, or
-         market — every value comes from the intake wizard.</p>
-      <p class="muted">MarketLens works in four steps, always in this order:
-         <b>1) Configure → 2) Collect → 3) Analyze → 4) Export.</b>
-         Filling the source plan only says <i>where</i> to look; you still have to run
-         Collect and Analyze before a report has anything in it.</p>
-      <button id="empty-new-btn">+ Create your first study</button>
+      <div class="sidebar-foot">
+        <span id="user-chip" class="chip hidden"></span>
+        <button id="logout-btn" class="ghost hidden">Sign out</button>
+        <span id="version-stamp" class="muted">MarketLens</span>
+      </div>
+    </aside>
+
+    <div class="main-col">
+      <header class="topbar">
+        <div class="project-picker">
+          <select id="project-select" title="Active project"></select>
+        </div>
+        <div class="topbar-right">
+          <button id="new-project-btn" class="ghost">+ New study</button>
+          <button id="new-discovery-btn">✨ AI-guided study</button>
+        </div>
+      </header>
+
+      <main id="main">
+        <div id="workflow" class="workflow hidden"></div>
+        <div id="empty-state" class="card empty-card">
+          <h2>Welcome to MarketLens</h2>
+          <p>Create a study to begin. Nothing here is hard-coded to any brand, category, or
+             market — every value comes from the intake wizard.</p>
+          <p class="muted">MarketLens works in four steps, always in this order:
+             <b>1) Configure → 2) Collect → 3) Analyze → 4) Export.</b>
+             Filling the source plan only says <i>where</i> to look; you still have to run
+             Collect and Analyze before a report has anything in it.</p>
+          <button id="empty-new-btn">+ Create your first study</button>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <span class="muted">Decision-grade · honest feasibility · precision over volume</span>
+      </footer>
     </div>
-  </main>
+  </div>
 
   <!-- Wizard modal -->
   <div id="wizard-modal" class="overlay hidden">
@@ -126,11 +150,6 @@
       </div>
     </div>
   </div>
-
-  <footer class="footer">
-    <span id="version-stamp">MarketLens</span>
-    <span class="muted">Decision-grade · honest feasibility · precision over volume</span>
-  </footer>
 
   <div id="toast" class="toast hidden"></div>
   <script src="/static/app.js"></script>
