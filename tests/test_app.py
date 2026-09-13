@@ -160,6 +160,98 @@ def test_wizard_rejects_empty_country(client, monkeypatch):
     assert "country" in r.json()["detail"].lower()
 
 
+def test_wizard_accepts_city_level_geo_scope(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["market"] = {"languages": ["en"],
+                        "geo_scope": {"level": "city", "value": "Bangalore", "country": "India"}}
+    r = client.post("/api/projects/wizard", json=intake)
+    assert r.status_code == 200
+    cfg = r.json()["config"]
+    assert cfg["market"]["country"] == "India"
+    assert cfg["market"]["geo_scope"]["value"] == "Bangalore"
+    assert "Bangalore" in cfg["market"]["market_terms"]
+
+
+def test_wizard_rejects_invalid_geo_scope_level(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["market"] = {"languages": ["en"],
+                        "geo_scope": {"level": "planet", "value": "Earth", "country": "India"}}
+    r = client.post("/api/projects/wizard", json=intake)
+    assert r.status_code == 400
+    assert "geo_scope.level" in r.json()["detail"]
+
+
+def test_wizard_rejects_state_level_geo_scope_without_country(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["market"] = {"languages": ["en"],
+                        "geo_scope": {"level": "state", "value": "Karnataka"}}  # no country
+    r = client.post("/api/projects/wizard", json=intake)
+    assert r.status_code == 400
+    assert "country" in r.json()["detail"].lower()
+
+
+def test_wizard_rejects_geo_scope_that_is_not_an_object(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["market"] = {"languages": ["en"], "geo_scope": "Bangalore"}
+    r = client.post("/api/projects/wizard", json=intake)
+    assert r.status_code == 400
+
+
+def test_classify_category_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    import category_discovery
+    monkeypatch.setattr(category_discovery, "classify_category",
+                        lambda term, geo_scope=None, **kw: {
+                            "category": "coffee / food & beverage lifestyle",
+                            "confidence": 0.9, "reasoning": "x",
+                            "structured_data_hint": None, "needs_confirmation": False,
+                        })
+    r = client.post("/api/discovery/classify-category", json={"term": "coffee"})
+    assert r.status_code == 200
+    assert r.json()["category"] == "coffee / food & beverage lifestyle"
+
+
+def test_classify_category_endpoint_400_on_empty_term(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/discovery/classify-category", json={"term": ""})
+    assert r.status_code == 400
+
+
+def test_discover_sites_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    import site_intelligence
+    monkeypatch.setattr(site_intelligence, "discover_sites",
+                        lambda category, geo_scope=None, **kw: {
+                            "category": category,
+                            "sites": [{"name": "ScoopWhoop", "domain": "scoopwhoop.com",
+                                      "known": False, "needs_validation": True}],
+                            "_summary": {"total": 1, "known": 0, "needs_validation": 1},
+                        })
+    r = client.post("/api/discovery/sites", json={"category": "coffee"})
+    assert r.status_code == 200
+    assert r.json()["sites"][0]["domain"] == "scoopwhoop.com"
+
+
+def test_confirm_sites_endpoint_actually_writes_to_the_ledger(client, monkeypatch):
+    # No mocking here -- exercise the real storage write through the real endpoint.
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/discovery/confirm-sites",
+                    json={"category": "coffee", "domains": ["scoopwhoop.com"]})
+    assert r.status_code == 200
+    assert r.json()["count"] == 1
+    assert storage.get_site_intelligence("scoopwhoop.com", "coffee")["validated_by_human"] == 1
+
+
+def test_confirm_sites_endpoint_400_on_empty_category(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/discovery/confirm-sites", json={"category": "", "domains": ["x.com"]})
+    assert r.status_code == 400
+
+
 def test_regenerate_feeds_picks_up_edited_keywords(client, monkeypatch):
     # PUT /config alone does not recompute feeds — this endpoint is what Source Plan
     # keyword edits must go through for the News scraper to actually see them.

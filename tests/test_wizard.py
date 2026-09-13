@@ -97,6 +97,42 @@ def test_wizard_market_terms_include_native_script_country_name():
     assert "ભારત" not in terms
 
 
+def test_wizard_geo_scope_city_adds_value_to_market_terms():
+    """DESIGN_01 §3: a city/state/region geo_scope needs no new matching mechanism — its
+    value just becomes another market_term, reusing market_signal() unchanged."""
+    cfg = config.run_wizard({
+        "market": {"languages": ["en"],
+                  "geo_scope": {"level": "city", "value": "Bangalore", "country": "India"}},
+        "product": {"brand": "", "category": "coffee", "category_type": "fmcg_food"},
+    })
+    assert cfg["market"]["country"] == "India"  # country-level facts still resolve correctly
+    assert cfg["market"]["country_code"] == "IN"
+    terms = cfg["market"]["market_terms"]
+    assert "India" in terms and "Indian" in terms
+    assert "Bangalore" in terms
+    assert cfg["market"]["geo_scope"] == {"level": "city", "value": "Bangalore", "country": "India"}
+
+
+def test_wizard_geo_scope_country_level_does_not_duplicate_market_terms():
+    cfg = config.run_wizard({
+        "market": {"languages": ["en"],
+                  "geo_scope": {"level": "country", "value": "India", "country": "India"}},
+        "product": {"brand": "", "category": "coffee", "category_type": "fmcg_food"},
+    })
+    terms = cfg["market"]["market_terms"]
+    assert terms.count("India") == 1  # not duplicated by geo_scope.value at country level
+
+
+def test_wizard_without_geo_scope_has_no_geo_scope_key():
+    # Backward compatibility: a plain intake (no geo_scope) produces config identical in
+    # shape to before this feature existed -- no geo_scope key appears at all.
+    cfg = config.run_wizard({
+        "market": {"country": "India", "languages": ["en"]},
+        "product": {"brand": "", "category": "coffee", "category_type": "fmcg_food"},
+    })
+    assert "geo_scope" not in cfg["market"]
+
+
 def test_wizard_market_terms_native_name_absent_for_unconfigured_country():
     # A country with no native_names entry (everything except India, currently) must
     # degrade gracefully — no crash, no fabricated term.

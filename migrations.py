@@ -153,10 +153,73 @@ def _m002_story_clusters(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m003_category_discovery(conn: sqlite3.Connection) -> None:
+    """Category-aware, multi-vertical source discovery (see DESIGN_01_category-discovery.md).
+
+    - items.raw_html / .category / .source_type: raw-content retention (a real, previously
+      absent gap — DESIGN_01 ground rule #4) plus per-item tagging so a project spanning
+      several categories/source-types can be broken down in the dashboard. Only items
+      collected through the new discovery pipeline populate these; existing channels are
+      unaffected (columns default NULL).
+    - runs.job_kind / .checkpoint_json: distinguishes a one-time historical backfill from a
+      standing daily run, and lets a long, multi-source job resume from where it left off
+      after a crash/restart instead of losing all progress (DESIGN_01 ground rule #5).
+    - source_health: per-project, per-source circuit-breaker state — a source that fails/
+      gets blocked repeatedly is auto-paused and surfaced to the operator instead of being
+      retried forever or silently dropped.
+    - site_intelligence: DELIBERATELY GLOBAL (no project_id) — a cross-project ledger of
+      which real domains are good sources for which category, built from actual outcomes
+      over time, not re-derived from scratch by every new project. See DESIGN_01 §4b.
+    """
+    conn.executescript(
+        """
+        ALTER TABLE items ADD COLUMN raw_html TEXT;
+        ALTER TABLE items ADD COLUMN category TEXT;
+        ALTER TABLE items ADD COLUMN source_type TEXT;
+
+        ALTER TABLE runs ADD COLUMN job_kind TEXT;
+        ALTER TABLE runs ADD COLUMN checkpoint_json TEXT NOT NULL DEFAULT '{}';
+
+        CREATE TABLE IF NOT EXISTS source_health (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id            INTEGER NOT NULL REFERENCES projects(id),
+            source_url            TEXT NOT NULL,
+            domain                TEXT NOT NULL,
+            consecutive_failures  INTEGER NOT NULL DEFAULT 0,
+            last_status           TEXT,
+            last_checked_at       TEXT,
+            paused                INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(project_id, source_url)
+        );
+        CREATE INDEX IF NOT EXISTS idx_source_health_project ON source_health(project_id);
+
+        CREATE TABLE IF NOT EXISTS site_intelligence (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            domain              TEXT NOT NULL,
+            category            TEXT NOT NULL,
+            name                TEXT,
+            source_type         TEXT,
+            times_suggested     INTEGER NOT NULL DEFAULT 0,
+            times_used          INTEGER NOT NULL DEFAULT 0,
+            items_kept          INTEGER NOT NULL DEFAULT 0,
+            items_dropped       INTEGER NOT NULL DEFAULT 0,
+            times_blocked       INTEGER NOT NULL DEFAULT 0,
+            validated_by_human  INTEGER NOT NULL DEFAULT 0,
+            confidence          REAL,
+            last_used_at        TEXT,
+            created_at          TEXT NOT NULL,
+            UNIQUE(domain, category)
+        );
+        CREATE INDEX IF NOT EXISTS idx_site_intel_category ON site_intelligence(category);
+        """
+    )
+
+
 # Ordered list. Index 0 is applied to move user_version 0 -> 1, etc.
 MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _m001_initial,
     _m002_story_clusters,
+    _m003_category_discovery,
 ]
 
 

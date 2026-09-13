@@ -184,6 +184,51 @@ def api_projects(user: str = Depends(require_user)):
     return storage.list_projects()
 
 
+# --------------------------------------------------------------------------- #
+# Category-aware discovery (DESIGN_01_category-discovery.md, Phase B increment 1)
+#
+# Pre-project, stateless wizard-support endpoints — the new wizard accumulates a draft
+# intake client-side and calls these one step at a time; nothing is persisted as a real
+# project until the existing /api/projects/wizard is finally called (DESIGN_01 §12).
+# --------------------------------------------------------------------------- #
+@app.post("/api/discovery/classify-category")
+def api_classify_category(body: Dict[str, Any], user: str = Depends(require_user)):
+    term = (body or {}).get("term", "")
+    geo_scope = (body or {}).get("geo_scope")
+    import category_discovery
+    try:
+        return category_discovery.classify_category(term, geo_scope=geo_scope)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/discovery/sites")
+def api_discover_sites(body: Dict[str, Any], user: str = Depends(require_user)):
+    """AI-suggest real sites for a category, merged with the cross-project site
+    intelligence ledger (DESIGN_01 §4b) — sites with a real, good track record are shown
+    pre-trusted; everything else is flagged for manual validation. Read-only."""
+    category = (body or {}).get("category", "")
+    geo_scope = (body or {}).get("geo_scope")
+    import site_intelligence
+    try:
+        return site_intelligence.discover_sites(category, geo_scope=geo_scope)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/discovery/confirm-sites")
+def api_confirm_sites(body: Dict[str, Any], user: str = Depends(require_user)):
+    """User-confirmed subset of /api/discovery/sites' output — the only place anything is
+    written to the site intelligence ledger from the discovery step itself."""
+    category = (body or {}).get("category", "")
+    domains = (body or {}).get("domains") or []
+    import site_intelligence
+    try:
+        return site_intelligence.confirm_sites(category, domains)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/api/projects/wizard")
 def api_wizard(intake: Dict[str, Any], user: str = Depends(require_user)):
     # A study needs at least one anchor to generate keywords/relevance terms from — brand
@@ -193,13 +238,42 @@ def api_wizard(intake: Dict[str, Any], user: str = Depends(require_user)):
     if not (product.get("brand") or "").strip() and not (product.get("category") or "").strip():
         raise HTTPException(status_code=400,
                              detail="Provide a brand name, a product category, or both.")
+    market = intake.get("market") or {}
+    intake["market"] = market
+
+    # Optional, additive: a hierarchical geo-scope (country/state/region/city) per
+    # DESIGN_01_category-discovery.md §3, superseding the single-country-only framing with a
+    # variable-granularity one. Absent geo_scope -> behavior is IDENTICAL to before this was
+    # added (existing callers/tests are unaffected). Present geo_scope derives market.country
+    # so every existing country-level lookup (config.COUNTRY_TABLE: ISO/GDELT/demonym/
+    # native_names) keeps working unchanged regardless of the chosen granularity — a city
+    # still needs its parent country's facts.
+    geo_scope = market.get("geo_scope")
+    if geo_scope is not None:
+        if not isinstance(geo_scope, dict):
+            raise HTTPException(status_code=400,
+                                 detail="geo_scope must be an object with level/value/country.")
+        level = (geo_scope.get("level") or "").strip().lower()
+        value = (geo_scope.get("value") or "").strip()
+        geo_country = (geo_scope.get("country") or "").strip()
+        if level not in config_mod.GEO_SCOPE_LEVELS:
+            raise HTTPException(status_code=400,
+                                 detail=f"geo_scope.level must be one of {sorted(config_mod.GEO_SCOPE_LEVELS)}.")
+        if not value:
+            raise HTTPException(status_code=400, detail="geo_scope.value is required.")
+        if level == "country":
+            geo_country = geo_country or value  # the value IS the country at this level
+        if not geo_country:
+            raise HTTPException(status_code=400,
+                                 detail="geo_scope.country is required for state/region/city scopes.")
+        market["geo_scope"] = {"level": level, "value": value, "country": geo_country}
+        market["country"] = geo_country
+
     # A study targets exactly one market. The intake form's country control allows
     # multi-select (same widget as languages, for interaction consistency), but a study's
     # country field itself is a single string throughout config.py/GDELT/Google News/etc —
     # so more than one value here means the form's own guard was bypassed (e.g. a direct
     # API call). Reject rather than silently pick one.
-    market = intake.get("market") or {}
-    intake["market"] = market
     country_val = market.get("country")
     if isinstance(country_val, list):
         if len(country_val) != 1:

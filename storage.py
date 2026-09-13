@@ -650,6 +650,92 @@ def list_audit(project_id: Optional[int] = None, limit: int = 300) -> List[Dict[
 
 
 # --------------------------------------------------------------------------- #
+# Site intelligence ledger (cross-project — see DESIGN_01_category-discovery.md §4b)
+#
+# Deliberately NOT scoped by project_id: the whole point is that what one project learns
+# about a domain's usefulness for a category benefits every later project asking about the
+# same category, not just the one that happened to discover it first.
+# --------------------------------------------------------------------------- #
+def get_site_intelligence(domain: str, category: str) -> Optional[Dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM site_intelligence WHERE domain=? AND category=?", (domain, category)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_site_intelligence(category: str, min_confidence: float = 0.0,
+                           limit: int = 50) -> List[Dict[str, Any]]:
+    """Known sites for a category, most-confident first. A NULL confidence (never used yet,
+    only ever suggested) sorts last, not first — untested is not the same as low-confidence."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM site_intelligence WHERE category=? "
+            "AND (confidence IS NULL OR confidence >= ?) "
+            "ORDER BY (confidence IS NULL) ASC, confidence DESC LIMIT ?",
+            (category, min_confidence, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_site_seen(domain: str, category: str, name: str = "", source_type: str = "") -> None:
+    """Record that a domain was proposed for a category (by the LLM or a human), creating
+    the ledger row on first sight. Does not touch outcome counters — see record_site_outcome."""
+    with write_conn() as conn:
+        conn.execute(
+            "INSERT INTO site_intelligence (domain, category, name, source_type, "
+            "times_suggested, created_at) VALUES (?,?,?,?,1,?) "
+            "ON CONFLICT(domain, category) DO UPDATE SET "
+            "times_suggested = times_suggested + 1, "
+            "name = COALESCE(NULLIF(excluded.name, ''), site_intelligence.name), "
+            "source_type = COALESCE(NULLIF(excluded.source_type, ''), site_intelligence.source_type)",
+            (domain, category, name, source_type, utcnow()),
+        )
+
+
+def record_site_outcome(domain: str, category: str, kept: int = 0, dropped: int = 0,
+                        blocked: bool = False) -> None:
+    """Update a site's real track record after a collection run actually used it. Confidence
+    is recomputed as kept/(kept+dropped) over the ALL-TIME accumulated counts (not just this
+    run), so one unusually good or bad run doesn't swing the score on its own — see
+    DESIGN_01 §4b for the smoothing rationale (exact formula may still evolve)."""
+    with write_conn() as conn:
+        conn.execute(
+            "INSERT INTO site_intelligence (domain, category, times_used, items_kept, "
+            "items_dropped, times_blocked, last_used_at, created_at) VALUES (?,?,1,?,?,?,?,?) "
+            "ON CONFLICT(domain, category) DO UPDATE SET "
+            "times_used = times_used + 1, "
+            "items_kept = items_kept + excluded.items_kept, "
+            "items_dropped = items_dropped + excluded.items_dropped, "
+            "times_blocked = times_blocked + excluded.times_blocked, "
+            "last_used_at = excluded.last_used_at",
+            (domain, category, kept, dropped, 1 if blocked else 0, utcnow(), utcnow()),
+        )
+        total = conn.execute(
+            "SELECT items_kept, items_dropped FROM site_intelligence WHERE domain=? AND category=?",
+            (domain, category),
+        ).fetchone()
+        if total is not None:
+            k, d = total["items_kept"], total["items_dropped"]
+            confidence = k / (k + d) if (k + d) > 0 else None
+            conn.execute(
+                "UPDATE site_intelligence SET confidence=? WHERE domain=? AND category=?",
+                (confidence, domain, category),
+            )
+
+
+def mark_site_validated(domain: str, category: str) -> None:
+    """A human confirmed this (domain, category) pair — future suggestions of the exact same
+    pair can be shown as pre-validated instead of asking again."""
+    with write_conn() as conn:
+        conn.execute(
+            "INSERT INTO site_intelligence (domain, category, validated_by_human, created_at) "
+            "VALUES (?,?,1,?) ON CONFLICT(domain, category) DO UPDATE SET validated_by_human=1",
+            (domain, category, utcnow()),
+        )
+
+
+# --------------------------------------------------------------------------- #
 # Users (team mode)
 # --------------------------------------------------------------------------- #
 def create_user(username: str, password_hash: str, salt: str, is_admin: bool = False) -> int:

@@ -80,6 +80,13 @@ CATEGORY_TYPES = [
 # Which category types plausibly have delivery / quick-commerce distribution.
 DELIVERY_APPLICABLE = {"fmcg_food"}
 
+# Geo-scope granularity (DESIGN_01_category-discovery.md §3) — a study still targets exactly
+# ONE geo-scope point (this generalizes granularity, not multiplicity; multi-market-in-one-
+# study is a separate, unaddressed gap). Every level still resolves a parent country, since
+# ISO/GDELT/demonym/native-script facts (COUNTRY_TABLE) are genuinely country-level, not
+# state/city-level.
+GEO_SCOPE_LEVELS = {"country", "state", "region", "city"}
+
 # ISO 639-1 codes + English names — powers the intake wizard's language dropdown
 # (single AND multi-select via a native <select multiple>). A generic reference table,
 # same category as COUNTRY_TABLE: facts about the world, not about any project. This is
@@ -486,6 +493,14 @@ def run_wizard(intake: Dict[str, Any]) -> Dict[str, Any]:
     product = intake.get("product", {})
     competitors = [c for c in intake.get("competitors", []) if c]
 
+    geo_scope = market.get("geo_scope")  # already validated by app.py's api_wizard if present
+    # Self-sufficient even when called directly (bypassing app.py's HTTP-layer validation,
+    # e.g. every test in tests/test_wizard.py) — country-level facts (ISO/GDELT/demonym/
+    # native_names) are looked up from market.country regardless of the chosen granularity,
+    # so a geo_scope without an already-populated market.country still needs one derived.
+    if geo_scope and not (market.get("country") or "").strip():
+        market["country"] = geo_scope.get("country") or geo_scope.get("value") or ""
+
     country_info = resolve_country(market.get("country", ""))
     iso = country_info.get("iso", "")
     languages = [l for l in market.get("languages", []) if l] or ["en"]
@@ -555,10 +570,16 @@ def run_wizard(intake: Dict[str, Any]) -> Dict[str, Any]:
             # genuinely India-published content (verified live). Add cities/regions in
             # Source plan to sharpen further.
             "cctld": f".{iso.lower()}" if iso else "",
+            # A state/region/city geo_scope contributes its OWN value as a market_term too —
+            # no new matching mechanism needed, market_signal() (scrapers/news.py) already
+            # checks this list. At level="country" the value already equals the country name,
+            # already present above, so it's skipped to avoid a redundant duplicate entry.
             "market_terms": [t for t in (
                 [country_info.get("name", ""), country_info.get("demonym", "")]
                 + [country_info.get("native_names", {}).get(l, "") for l in languages]
+                + ([geo_scope.get("value", "")] if geo_scope and geo_scope.get("level") != "country" else [])
             ) if t],
+            **({"geo_scope": geo_scope} if geo_scope else {}),
         },
         "product": {
             "brand": brand,

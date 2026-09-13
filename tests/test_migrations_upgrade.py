@@ -39,6 +39,32 @@ def test_apply_to_empty_v0_db(tmp_path):
     migrations.apply_migrations(conn)
     assert conn.execute("PRAGMA user_version").fetchone()[0] == migrations.latest_version()
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    for t in ("projects", "runs", "items", "analysis", "market_intel", "schedules", "users", "audit_log"):
+    for t in ("projects", "runs", "items", "analysis", "market_intel", "schedules", "users",
+              "audit_log", "source_health", "site_intelligence"):
         assert t in tables
     conn.close()
+
+
+def test_m003_columns_and_site_intelligence_shape(fresh_db):
+    # items/runs get the new columns; site_intelligence is keyed UNIQUE(domain, category) so
+    # the same domain can appear once per category but not twice for the same category.
+    with storage.get_conn() as conn:
+        item_cols = {r[1] for r in conn.execute("PRAGMA table_info(items)").fetchall()}
+        run_cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    assert {"raw_html", "category", "source_type"} <= item_cols
+    assert {"job_kind", "checkpoint_json"} <= run_cols
+
+    with storage.write_conn() as conn:
+        conn.execute(
+            "INSERT INTO site_intelligence (domain, category, created_at) VALUES (?,?,?)",
+            ("scoopwhoop.com", "coffee", "2026-01-01"),
+        )
+    try:
+        with storage.write_conn() as conn:
+            conn.execute(
+                "INSERT INTO site_intelligence (domain, category, created_at) VALUES (?,?,?)",
+                ("scoopwhoop.com", "coffee", "2026-01-02"),
+            )
+        assert False, "UNIQUE(domain, category) should have rejected the duplicate"
+    except sqlite3.IntegrityError:
+        pass
