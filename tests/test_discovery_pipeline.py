@@ -153,3 +153,103 @@ def test_pilot_marks_all_relevant_dropped_as_blocked_when_extraction_totally_fai
     assert report["_summary"]["pages_extracted_ok"] == 0
     row = storage.get_site_intelligence("good.example", "coffee")
     assert row["times_blocked"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# source_health circuit breaker integration (DESIGN_01 §7.4, increment 5) —
+# only exercised when project_id is given.
+# --------------------------------------------------------------------------- #
+def test_pilot_without_project_id_never_touches_source_health():
+    """No project_id -> no per-project state to check or update -- confirms the
+    pipeline still runs exactly as Increment 4 shipped it when this optional param
+    is omitted, with no DB access at all (no fresh_db needed for this test)."""
+    page_fetch = _page_fetch_for({
+        "https://good.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+    })
+    report = dp.run_source_type_pilot(
+        "coffee", ["good.example"], keywords=["coffee"],
+        probe_fn=_reachable_probe, sitemap_fetch_fn=_sitemap_fetch, page_fetch_fn=page_fetch,
+    )
+    assert "circuit_breaker_note" not in report["sites"][0]
+    assert report["sites"][0]["stopped_early_by_circuit_breaker"] is False
+
+
+def test_pilot_skips_a_domain_already_paused_from_a_prior_run(fresh_db):
+    pid = storage.create_project("P", {})
+    for _ in range(3):
+        storage.record_source_attempt(pid, "good.example", "good.example", success=False)
+    assert storage.get_source_health(pid, "good.example")["paused"] == 1
+
+    calls = {"sitemap": 0, "page": 0}
+
+    def sitemap_fetch(url):
+        calls["sitemap"] += 1
+        return _Resp(URLSET)
+
+    def page_fetch(url):
+        calls["page"] += 1
+        return _Resp(ARTICLE_ABOUT_COFFEE)
+
+    report = dp.run_source_type_pilot(
+        "coffee", ["good.example"], keywords=["coffee"], project_id=pid,
+        probe_fn=_reachable_probe, sitemap_fetch_fn=sitemap_fetch, page_fetch_fn=page_fetch,
+    )
+    assert calls["sitemap"] == 0
+    assert calls["page"] == 0
+    assert report["sites"][0]["skipped"] is True
+    assert "already paused" in report["sites"][0]["circuit_breaker_note"]
+
+
+def test_pilot_stops_a_domain_early_mid_run_after_hitting_the_failure_threshold(fresh_db):
+    pid = storage.create_project("P", {})
+
+    # Sitemap matches 2 URLs (see URLSET); both fail -- with pause_after=2 the second
+    # failure should trip the breaker (nothing left to attempt after it either way here,
+    # but the mechanism is exercised and the row is left correctly paused for next run).
+    def page_fetch(url):
+        return _Resp("thin", status=200)  # too short -> counted as a failure
+
+    report = dp.run_source_type_pilot(
+        "coffee", ["good.example"], keywords=["coffee"], project_id=pid, pause_after=2,
+        probe_fn=_reachable_probe, sitemap_fetch_fn=_sitemap_fetch, page_fetch_fn=page_fetch,
+    )
+    site = report["sites"][0]
+    assert site["stopped_early_by_circuit_breaker"] is True
+    row = storage.get_source_health(pid, "good.example")
+    assert row["paused"] == 1
+    assert row["consecutive_failures"] == 2
+
+
+def test_pilot_counts_a_broken_sitemap_itself_as_a_failure(fresh_db):
+    """A domain whose sitemap 404s forever must still accumulate consecutive_failures
+    and eventually pause -- otherwise it would be retried on every single future run
+    forever, since the per-URL loop never even runs when there are no URLs to fetch."""
+    pid = storage.create_project("P", {})
+
+    def broken_sitemap(url):
+        return _Resp("not found", status=404)
+
+    for _ in range(3):
+        dp.run_source_type_pilot(
+            "coffee", ["broken.example"], keywords=["coffee"], project_id=pid,
+            probe_fn=_reachable_probe, sitemap_fetch_fn=broken_sitemap,
+            page_fetch_fn=lambda u: _Resp(ARTICLE_ABOUT_COFFEE),
+        )
+    row = storage.get_source_health(pid, "broken.example")
+    assert row["consecutive_failures"] == 3
+    assert row["paused"] == 1
+
+
+def test_pilot_records_success_and_keeps_a_healthy_domain_unpaused(fresh_db):
+    pid = storage.create_project("P", {})
+    page_fetch = _page_fetch_for({
+        "https://good.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+        "https://good.example/coffee/relevant-2": ARTICLE_ABOUT_COFFEE,
+    })
+    dp.run_source_type_pilot(
+        "coffee", ["good.example"], keywords=["coffee"], project_id=pid,
+        probe_fn=_reachable_probe, sitemap_fetch_fn=_sitemap_fetch, page_fetch_fn=page_fetch,
+    )
+    row = storage.get_source_health(pid, "good.example")
+    assert row["paused"] == 0
+    assert row["consecutive_failures"] == 0

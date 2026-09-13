@@ -85,6 +85,87 @@ def test_purge_removes_project(fresh_db):
 
 
 # --------------------------------------------------------------------------- #
+# Source health circuit breaker (DESIGN_01 §7.4) — per-project, unlike site_intelligence
+# --------------------------------------------------------------------------- #
+def test_record_source_attempt_creates_row_on_first_failure(fresh_db):
+    pid = storage.create_project("P", {})
+    row = storage.record_source_attempt(pid, "https://flaky.com/feed", "flaky.com",
+                                        success=False, status="HTTP 500")
+    assert row["consecutive_failures"] == 1
+    assert row["paused"] == 0
+    assert row["last_status"] == "HTTP 500"
+
+
+def test_record_source_attempt_auto_pauses_after_threshold(fresh_db):
+    pid = storage.create_project("P", {})
+    url = "https://flaky.com/feed"
+    for _ in range(2):
+        row = storage.record_source_attempt(pid, url, "flaky.com", success=False)
+        assert row["paused"] == 0
+    row = storage.record_source_attempt(pid, url, "flaky.com", success=False)
+    assert row["consecutive_failures"] == 3
+    assert row["paused"] == 1
+
+
+def test_record_source_attempt_success_resets_streak_and_clears_pause(fresh_db):
+    pid = storage.create_project("P", {})
+    url = "https://flaky.com/feed"
+    for _ in range(3):
+        storage.record_source_attempt(pid, url, "flaky.com", success=False)
+    row = storage.record_source_attempt(pid, url, "flaky.com", success=True, status="HTTP 200")
+    assert row["consecutive_failures"] == 0
+    assert row["paused"] == 0
+    assert row["last_status"] == "HTTP 200"
+
+
+def test_record_source_attempt_respects_custom_pause_after(fresh_db):
+    pid = storage.create_project("P", {})
+    url = "https://flaky.com/feed"
+    row = storage.record_source_attempt(pid, url, "flaky.com", success=False, pause_after=1)
+    assert row["paused"] == 1
+
+
+def test_source_health_is_scoped_per_project_not_global(fresh_db):
+    p1 = storage.create_project("P1", {})
+    p2 = storage.create_project("P2", {})
+    url = "https://shared-domain.com/feed"
+    for _ in range(3):
+        storage.record_source_attempt(p1, url, "shared-domain.com", success=False)
+    assert storage.get_source_health(p1, url)["paused"] == 1
+    assert storage.get_source_health(p2, url) is None  # a fresh project sees no history
+
+
+def test_unpause_source_clears_pause_and_streak(fresh_db):
+    pid = storage.create_project("P", {})
+    url = "https://flaky.com/feed"
+    for _ in range(3):
+        storage.record_source_attempt(pid, url, "flaky.com", success=False)
+    storage.unpause_source(pid, url)
+    row = storage.get_source_health(pid, url)
+    assert row["paused"] == 0
+    assert row["consecutive_failures"] == 0
+
+
+def test_list_source_health_sorts_worst_first_and_can_filter_to_paused(fresh_db):
+    pid = storage.create_project("P", {})
+    storage.record_source_attempt(pid, "https://ok.com/feed", "ok.com", success=True)
+    storage.record_source_attempt(pid, "https://bad.com/feed", "bad.com", success=False)
+    for _ in range(3):
+        storage.record_source_attempt(pid, "https://dead.com/feed", "dead.com", success=False)
+
+    all_rows = storage.list_source_health(pid)
+    assert [r["domain"] for r in all_rows] == ["dead.com", "bad.com", "ok.com"]
+
+    paused_only = storage.list_source_health(pid, paused_only=True)
+    assert [r["domain"] for r in paused_only] == ["dead.com"]
+
+
+def test_get_source_health_returns_none_when_unknown(fresh_db):
+    pid = storage.create_project("P", {})
+    assert storage.get_source_health(pid, "https://never-seen.com/feed") is None
+
+
+# --------------------------------------------------------------------------- #
 # Site intelligence ledger (DESIGN_01 §4b) — deliberately global, no project_id
 # --------------------------------------------------------------------------- #
 def test_upsert_site_seen_creates_then_increments(fresh_db):

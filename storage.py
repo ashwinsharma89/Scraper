@@ -650,6 +650,83 @@ def list_audit(project_id: Optional[int] = None, limit: int = 300) -> List[Dict[
 
 
 # --------------------------------------------------------------------------- #
+# Source health circuit breaker (per-project — DESIGN_01_category-discovery.md §7.4)
+#
+# Addresses AUDIT_05's confirmed "no circuit breakers" finding: a source that fails or
+# gets blocked repeatedly is auto-paused for future runs instead of being retried
+# forever (wasting rate budget on something already known to be dead) or silently
+# dropped with no operator visibility. Scoped by project_id (unlike site_intelligence,
+# which is deliberately global) — a source's operational reliability for THIS project's
+# actual configured collection is a different question from "is this domain generally a
+# good category source," and belongs with the project whose runs observed it.
+# --------------------------------------------------------------------------- #
+def get_source_health(project_id: int, source_url: str) -> Optional[Dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM source_health WHERE project_id=? AND source_url=?",
+            (project_id, source_url),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_source_health(project_id: int, paused_only: bool = False) -> List[Dict[str, Any]]:
+    q = "SELECT * FROM source_health WHERE project_id=?"
+    args: List[Any] = [project_id]
+    if paused_only:
+        q += " AND paused=1"
+    q += " ORDER BY consecutive_failures DESC, source_url"
+    with get_conn() as conn:
+        rows = conn.execute(q, args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def record_source_attempt(project_id: int, source_url: str, domain: str, success: bool,
+                          status: Optional[str] = None, pause_after: int = 3) -> Dict[str, Any]:
+    """Record one real fetch attempt's outcome. A success resets the consecutive-failure
+    counter and clears any pause; a failure increments it and auto-pauses once it reaches
+    ``pause_after`` (default 3, DESIGN_01 §7.4's proposed threshold). Returns the updated
+    row so a caller can immediately act on a fresh pause without a second query.
+
+    Read-then-write inside one write_conn(): write_conn holds the global write lock for
+    its whole lifetime, so this read of the prior count and the write of the new one are
+    atomic against a concurrent caller — the increment can't be lost to a race.
+    """
+    with write_conn() as conn:
+        existing = conn.execute(
+            "SELECT consecutive_failures FROM source_health WHERE project_id=? AND source_url=?",
+            (project_id, source_url),
+        ).fetchone()
+        prev_failures = existing["consecutive_failures"] if existing else 0
+        new_failures = 0 if success else prev_failures + 1
+        paused = 1 if new_failures >= pause_after else 0
+        conn.execute(
+            "INSERT INTO source_health (project_id, source_url, domain, "
+            "consecutive_failures, last_status, last_checked_at, paused) "
+            "VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(project_id, source_url) DO UPDATE SET "
+            "consecutive_failures = excluded.consecutive_failures, "
+            "domain = excluded.domain, "
+            "last_status = excluded.last_status, "
+            "last_checked_at = excluded.last_checked_at, "
+            "paused = excluded.paused",
+            (project_id, source_url, domain, new_failures, status, utcnow(), paused),
+        )
+    return get_source_health(project_id, source_url)
+
+
+def unpause_source(project_id: int, source_url: str) -> None:
+    """Manual operator override — clears both the pause flag and the failure streak so
+    the source gets a genuinely fresh attempt next run, not just one more try before
+    re-pausing immediately."""
+    with write_conn() as conn:
+        conn.execute(
+            "UPDATE source_health SET paused=0, consecutive_failures=0 "
+            "WHERE project_id=? AND source_url=?",
+            (project_id, source_url),
+        )
+
+
+# --------------------------------------------------------------------------- #
 # Site intelligence ledger (cross-project — see DESIGN_01_category-discovery.md §4b)
 #
 # Deliberately NOT scoped by project_id: the whole point is that what one project learns

@@ -24,6 +24,15 @@ Scope, deliberately narrow (matches the pilot's own stated scope, §13 row 4):
   - Does NOT do worker-pool concurrency or job resumability (§8/§9) — those are a
     later, separate increment (§13 row 6), sequenced deliberately after this pilot
     proves the mechanism works at all on one source type.
+
+Optional `project_id` (§7.4, increment 5): when given, wires the source_health
+circuit breaker in at domain granularity — a domain already paused from a PRIOR run
+is skipped entirely (no probe, no sitemap fetch, no page fetch spent on something
+already known to be dead/blocked), and a domain that crosses the failure threshold
+DURING this run stops early instead of burning through its remaining sitemap URLs.
+Without `project_id` the pipeline runs exactly as before (e.g. an ad-hoc pilot not
+tied to a specific project) — source_health is a per-project table, so there is no
+honest per-project state to check or update without one.
 """
 from __future__ import annotations
 
@@ -40,6 +49,8 @@ def run_source_type_pilot(
     *,
     relevance_terms: Optional[List[str]] = None,
     per_source_cap: int = DEFAULT_PER_SOURCE_CAP,
+    project_id: Optional[int] = None,
+    pause_after: int = 3,
     probe_fn: Optional[Callable[[str], Dict[str, Any]]] = None,
     sitemap_fetch_fn: Optional[Callable[[str], Any]] = None,
     page_fetch_fn: Optional[Callable[[str], Any]] = None,
@@ -67,11 +78,28 @@ def run_source_type_pilot(
         },
     }
 
+    import storage as storage_mod  # module-level import kept local: many tests never
+                                    # touch a DB at all and shouldn't need fresh_db
+
     for domain in seed_domains:
         domain = (domain or "").strip()
         if not domain:
             continue
         site_report: Dict[str, Any] = {"domain": domain}
+
+        if project_id is not None:
+            existing_health = storage_mod.get_source_health(project_id, domain)
+            if existing_health and existing_health["paused"]:
+                site_report.update(
+                    reachable=None, skipped=True,
+                    circuit_breaker_note=(
+                        f"skipped: already paused after {existing_health['consecutive_failures']} "
+                        f"consecutive failures in a prior run"),
+                    urls_found=0, pages_ok=0, pages_failed=0,
+                )
+                report["sites"].append(site_report)
+                continue
+
         home = domain if domain.startswith("http") else f"https://{domain}"
 
         p = probe(home)
@@ -92,9 +120,21 @@ def run_source_type_pilot(
         report["_summary"]["raw_sitemap_urls"] += sm["_summary"]["raw_sitemap_urls"]
         report["_summary"]["urls_matched_keywords"] += sm["_summary"]["matched_keywords"]
 
+        if project_id is not None:
+            # A broken/missing sitemap is itself a real operational failure for this
+            # source, not merely "zero URLs found" — without recording it here, a
+            # domain whose sitemap is permanently 404 would never accumulate failures
+            # and would be retried, unpaused, on every single future run forever.
+            storage_mod.record_source_attempt(
+                project_id, domain, domain, success=sm["ok"],
+                status=(sm["error"][:200] if not sm["ok"] else "ok"),
+                pause_after=pause_after,
+            )
+
         extracted: List[Dict[str, Any]] = []
         fetch_errors: List[Dict[str, str]] = []
-        for url in sm["urls"]:
+        stopped_early = False
+        for i, url in enumerate(sm["urls"]):
             r = fetch_and_extract(url, fetch_fn=page_fetch_fn)
             report["_summary"]["pages_fetched"] += 1
             if r["ok"]:
@@ -103,9 +143,24 @@ def run_source_type_pilot(
             else:
                 fetch_errors.append({"url": url, "error": r["error"]})
                 report["_summary"]["pages_blocked_or_failed"] += 1
+
+            if project_id is not None:
+                health = storage_mod.record_source_attempt(
+                    project_id, domain, domain, success=r["ok"],
+                    status=(r["error"][:200] if not r["ok"] else "ok"),
+                    pause_after=pause_after,
+                )
+                if health["paused"]:
+                    remaining = len(sm["urls"]) - (i + 1)
+                    site_report["circuit_breaker_note"] = (
+                        f"stopped early after {health['consecutive_failures']} consecutive "
+                        f"failures this run — {remaining} remaining sitemap URLs not attempted")
+                    stopped_early = True
+                    break
         site_report["pages_ok"] = len(extracted)
         site_report["pages_failed"] = len(fetch_errors)
         site_report["sample_errors"] = fetch_errors[:3]
+        site_report["stopped_early_by_circuit_breaker"] = stopped_early
 
         if relevance_terms:
             kept = [it for it in extracted
@@ -117,12 +172,11 @@ def run_source_type_pilot(
             report["_summary"]["pages_dropped_irrelevant"] += dropped_count
             site_report["items"] = kept
 
-            import storage
             was_blocked_only = len(extracted) == 0 and len(fetch_errors) > 0 and all(
                 e["error"].startswith("blocked:") for e in fetch_errors
             )
-            storage.record_site_outcome(domain, category, kept=len(kept),
-                                       dropped=dropped_count, blocked=was_blocked_only)
+            storage_mod.record_site_outcome(domain, category, kept=len(kept),
+                                           dropped=dropped_count, blocked=was_blocked_only)
         else:
             site_report["items"] = extracted
 
