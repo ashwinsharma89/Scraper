@@ -1,4 +1,5 @@
 """Wizard generalization: URL building, source plan, no hard-coded brands."""
+import json
 import urllib.parse
 
 import config
@@ -156,6 +157,47 @@ def test_wizard_scaffolds_empty_native_language_slots():
     assert by_lang["hi"]["brand"] == []
     # Primary language seeded from intake only.
     assert by_lang["en"]["brand"] == ["Zeta"]
+
+
+def test_regenerate_news_feeds_reflects_edited_keywords():
+    """PUT /config alone does not recompute derived feed lists — regenerate_news_feeds()
+    is what Source Plan keyword edits must go through so the News scraper (which reads
+    the stored feed list, not keywords.by_language, at collect time) actually sees them."""
+    cfg = config.run_wizard({
+        "market": {"country": "India", "languages": ["en"]},
+        "product": {"brand": "", "category": "coffee", "category_type": "fmcg_food"},
+    })
+    assert len(cfg["source_plan"]["google_news_feeds"]) == 1  # just "coffee" so far
+
+    # Simulate a Source Plan edit: add more terms to the SAME existing structure...
+    edited = json.loads(json.dumps(cfg))  # deep copy, like the frontend does
+    edited["keywords"]["by_language"]["en"]["category_generic"] = ["coffee", "latte", "americano"]
+    regenerated = config.regenerate_news_feeds(edited)
+    gf = regenerated["source_plan"]["google_news_feeds"]
+    # ...still exactly ONE feed (one per language+structure) — broadened OR-query, not
+    # more feeds. This is the exact mechanic that limits volume from just adding synonyms
+    # to an existing slot.
+    assert len(gf) == 1
+    assert gf[0]["query"] == "coffee OR latte OR americano"
+
+    # ...versus adding a NEW structure key entirely -> a genuinely separate feed with its
+    # own ~100-result ceiling.
+    edited["keywords"]["by_language"]["en"]["category_generic_cold"] = ["cold coffee"]
+    regenerated2 = config.regenerate_news_feeds(edited)
+    assert len(regenerated2["source_plan"]["google_news_feeds"]) == 2
+
+    # Original config object must not be mutated.
+    assert len(cfg["source_plan"]["google_news_feeds"]) == 1
+
+
+def test_regenerate_news_feeds_preserves_other_source_plan_keys():
+    cfg = config.run_wizard({
+        "market": {"country": "Malaysia", "languages": ["en"]},
+        "product": {"brand": "Maggi", "category": "instant noodles", "category_type": "fmcg_food"},
+    })
+    cfg["source_plan"]["ecommerce_urls"] = ["https://example.com/search?q=maggi"]
+    regenerated = config.regenerate_news_feeds(cfg)
+    assert regenerated["source_plan"]["ecommerce_urls"] == ["https://example.com/search?q=maggi"]
 
 
 def test_list_countries_dedupes_aliases_and_is_sorted():

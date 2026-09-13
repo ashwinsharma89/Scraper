@@ -230,6 +230,23 @@ def api_update_config(pid: int, body: Dict[str, Any], user: str = Depends(requir
     return {"ok": True}
 
 
+@app.post("/api/projects/{pid}/regenerate-feeds")
+def api_regenerate_feeds(pid: int, user: str = Depends(require_user)):
+    """Recompute Google/Bing News feeds from the project's current keyword slots. Needed
+    because PUT .../config just stores whatever JSON it's given — editing keywords in
+    Source Plan does not, on its own, update the feed list the News scraper actually
+    reads at collect time. Call this after editing keyword slots."""
+    project = _project_or_404(pid)
+    new_cfg = config_mod.regenerate_news_feeds(project["config"])
+    storage.update_project_config(pid, new_cfg, None)
+    storage.audit("project.update", "regenerated news feeds from keywords", acting_user=user, project_id=pid)
+    return {
+        "ok": True,
+        "google_news_feeds": len(new_cfg["source_plan"]["google_news_feeds"]),
+        "bing_news_feeds": len(new_cfg["source_plan"]["bing_news_feeds"]),
+    }
+
+
 @app.delete("/api/projects/{pid}")
 def api_delete_project(pid: int, confirm: str = "", user: str = Depends(require_user)):
     _project_or_404(pid)

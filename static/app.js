@@ -482,12 +482,13 @@ async function saveSources() {
   // Market terms (drives the off-market news filter).
   const mt = el("market-terms");
   if (mt) { cfg.market = cfg.market || {}; cfg.market.market_terms = mt.value.split(",").map(x => x.trim()).filter(Boolean); }
-  // Regenerate Google News feeds from the edited keyword slots.
   try {
     await api(`/api/projects/${State.projectId}/config`, { method: "PUT", body: { config: cfg } });
-    // Re-run wizard-style regeneration by re-saving through a fresh wizard call is overkill;
-    // instead ask the user to note feeds regenerate on next edit. Reload project.
-    toast("Config saved. (Google News feeds regenerate when you recreate keyword structures.)");
+    // Editing keywords alone does NOT update the feed list the News scraper reads at
+    // collect time (PUT .../config just stores whatever JSON it's given) — this call
+    // recomputes source_plan.google_news_feeds/bing_news_feeds from what was just saved.
+    const r = await api(`/api/projects/${State.projectId}/regenerate-feeds`, { method: "POST" });
+    toast(`Config saved — ${r.google_news_feeds} Google News + ${r.bing_news_feeds} Bing News feed(s) regenerated.`);
     State.project = await api(`/api/projects/${State.projectId}`);
     render();
   } catch (e) { toast(e.message, true); }

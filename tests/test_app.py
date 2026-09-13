@@ -160,6 +160,29 @@ def test_wizard_rejects_empty_country(client, monkeypatch):
     assert "country" in r.json()["detail"].lower()
 
 
+def test_regenerate_feeds_picks_up_edited_keywords(client, monkeypatch):
+    # PUT /config alone does not recompute feeds — this endpoint is what Source Plan
+    # keyword edits must go through for the News scraper to actually see them.
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["product"] = {"brand": "", "category": "cola", "category_type": "fmcg_food"}
+    r = client.post("/api/projects/wizard", json=intake)
+    pid = r.json()["id"]
+    cfg = r.json()["config"]
+    assert len(cfg["source_plan"]["google_news_feeds"]) == 1  # just category_generic
+
+    # Add a whole new keyword structure (separate feed, separate ~100-result ceiling).
+    cfg["keywords"]["by_language"]["en"]["category_generic_diet"] = ["diet cola"]
+    client.put(f"/api/projects/{pid}/config", json={"config": cfg})
+
+    r2 = client.post(f"/api/projects/{pid}/regenerate-feeds")
+    assert r2.status_code == 200
+    assert r2.json()["google_news_feeds"] == 2
+
+    r3 = client.get(f"/api/projects/{pid}")
+    assert len(r3.json()["config"]["source_plan"]["google_news_feeds"]) == 2
+
+
 def test_health_reports_key_presence_not_values(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     import settings as settings_mod

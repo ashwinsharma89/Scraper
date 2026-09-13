@@ -304,6 +304,39 @@ def build_bing_news_feeds(
     return feeds
 
 
+def regenerate_news_feeds(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Recompute source_plan.google_news_feeds/bing_news_feeds from the project's CURRENT
+    keywords.by_language + market — a real gap this closes: ``PUT /api/projects/{id}/config``
+    stores whatever config JSON it is given and does NOT recompute derived feed lists on
+    its own, so editing keyword slots in Source Plan silently left the OLD feeds in place
+    (the scraper reads the stored feed list, not keywords.by_language, at collect time).
+    Call this any time keywords.by_language changes and you need the feeds to reflect it.
+
+    IMPORTANT for volume: one feed is generated per (language, structure) key, and every
+    term *within* a structure's list is OR-joined into that ONE feed's query — so adding
+    more terms to an EXISTING structure does not add more of Google/Bing News RSS's
+    ~100-results-per-query-per-date-chunk ceiling, it just broadens the one query that's
+    still capped at ~100. To actually raise the ceiling, put each additional term (or
+    small group) under its OWN structure key (any string works — the wizard's 4 named
+    slots are a convenience seed, not a fixed schema; this function and the scrapers
+    iterate whatever keys exist).
+
+    Returns a NEW config dict (does not mutate the input) with source_plan.google_news_feeds
+    and .bing_news_feeds replaced; every other key (including any manually-added
+    ecommerce_urls/forum_urls/etc. in source_plan) is preserved as-is."""
+    market = cfg.get("market", {})
+    languages = [l for l in (market.get("languages") or []) if l] or ["en"]
+    iso = market.get("country_code", "")
+    by_language = cfg.get("keywords", {}).get("by_language", {})
+
+    new_cfg = dict(cfg)
+    new_source_plan = dict(cfg.get("source_plan", {}))
+    new_source_plan["google_news_feeds"] = build_google_news_feeds(by_language, languages, iso)
+    new_source_plan["bing_news_feeds"] = build_bing_news_feeds(by_language, languages, iso)
+    new_cfg["source_plan"] = new_source_plan
+    return new_cfg
+
+
 # --------------------------------------------------------------------------- #
 # Subreddit / segment suggestions
 # --------------------------------------------------------------------------- #
