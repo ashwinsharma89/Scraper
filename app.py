@@ -51,6 +51,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="MarketLens", version=__version__, lifespan=lifespan)
 
 
+@app.middleware("http")
+async def _no_cache_static(request: Request, call_next):
+    """This is a no-build-step vanilla-JS SPA under active iteration — a browser silently
+    serving a stale cached copy of static/app.js or index.html after a code change (no
+    error, just old behavior/an empty dropdown/etc.) is a real, confusing failure mode
+    with zero explicit Cache-Control otherwise. Static assets are small and local; the
+    cost of never caching them is negligible next to that confusion."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 # --------------------------------------------------------------------------- #
 # Auth dependency
 # --------------------------------------------------------------------------- #

@@ -127,24 +127,30 @@ let _languageOptionsLoaded = false;
 async function loadLanguageOptions() {
   if (_languageOptionsLoaded) return;
   const sel = el("wizard-languages");
+  sel.innerHTML = `<option disabled>Loading…</option>`;
   try {
     const langs = await api("/api/reference/languages");
     sel.innerHTML = langs.map(l => `<option value="${esc(l.code)}">${esc(l.name)} (${esc(l.code)})</option>`).join("");
     _languageOptionsLoaded = true;
   } catch (e) {
-    // Non-fatal — the "Other language codes" free-text field still works without this.
+    // The "Other language codes" free-text field still works without this — but show
+    // WHY the box is empty rather than leaving a silent, unexplained blank box.
+    sel.innerHTML = `<option disabled>Couldn't load — ${esc(e.message)}. Use "Other" below, or reload the page.</option>`;
   }
 }
 let _countryOptionsLoaded = false;
 async function loadCountryOptions() {
   if (_countryOptionsLoaded) return;
   const sel = el("wizard-countries");
+  sel.innerHTML = `<option disabled>Loading…</option>`;
   try {
     const countries = await api("/api/reference/countries");
     sel.innerHTML = countries.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
     _countryOptionsLoaded = true;
   } catch (e) {
-    // Non-fatal — the "Other country/region" free-text field still works without this.
+    // The "Other country/region" free-text field still works without this — but show
+    // WHY the box is empty rather than leaving a silent, unexplained blank box.
+    sel.innerHTML = `<option disabled>Couldn't load — ${esc(e.message)}. Use "Other" below, or reload the page.</option>`;
   }
 }
 function openWizard() {

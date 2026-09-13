@@ -92,6 +92,16 @@ def test_version_and_mode_endpoints(client):
     assert r.json()["version"] == __version__
 
 
+def test_static_assets_are_never_cached(client):
+    # A no-build-step SPA under active iteration must never let a browser silently serve
+    # a stale app.js/index.html after a code change (an empty dropdown with no error is
+    # exactly what that looks like — this bit us live once already).
+    r = client.get("/")
+    assert r.headers.get("cache-control") == "no-store"
+    r = client.get("/static/app.js")
+    assert r.headers.get("cache-control") == "no-store"
+
+
 def test_reference_languages_backs_the_wizard_dropdown(client, monkeypatch):
     # Powers the intake wizard's single/multi-select language picker.
     monkeypatch.setenv("MODE", "solo")
