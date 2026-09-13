@@ -202,6 +202,73 @@ def test_market_filter_catches_demonym_only_mentions():
     assert res.diagnostics.get("off_market_dropped", 0) == 0
 
 
+def test_market_filter_trusts_country_scoped_edition_for_exclusive_language():
+    """Real gap found live: a Telugu (or Tamil/Kannada/...) article about a generic
+    lifestyle topic essentially never names the country in its title or RSS summary —
+    that's just not how local-language headlines work, in any language. But the feed
+    itself was already built as gl=IN&hl=te-IN (India's own Telugu edition), which for a
+    language this exclusive to one country IS market evidence on its own. Neither the
+    title/summary text nor the outlet domain mentions India/ccTLD here — this must still
+    be kept because Telugu is not in config.GLOBAL_LANGUAGES."""
+    RSS = """<?xml version='1.0'?><rss version='2.0'><channel><title>GN</title>
+    <item><title>Black coffee for weight loss</title><link>http://gn/te</link>
+      <description>Black coffee for weight loss</description><pubDate>2026-08-01</pubDate></item>
+    </channel></rss>"""
+    ART = ("<html><body><article><h1>Black coffee for weight loss</h1>"
+           "<p>Doctors explain how black coffee affects metabolism and daily energy.</p>"
+           "</article></body></html>")
+
+    def fetch(url):
+        if "news.google.com/rss/search" in url:
+            return _Resp(RSS)
+        return _Resp(ART, url="https://tv9telugu.com/x")  # .com, not .in — no ccTLD signal
+
+    cfg = {
+        "relevance_terms": ["coffee"],
+        "market": {"country": "India", "country_code": "IN", "cctld": ".in",
+                   "market_terms": ["India", "Indian"], "languages": ["te"]},
+        "source_plan": {"google_news_feeds": [{"language": "te", "structure": "category_generic",
+            "url": "https://news.google.com/rss/search?q=coffee&hl=te-IN&gl=IN&ceid=IN:te"}],
+            "rss_feeds": []},
+        "collection_settings": {"news_chunk": "none", "market_filter": True},
+    }
+    res = news.collect(cfg, {"start_date": "2026-08-01", "end_date": "2026-08-31"}, fetch_fn=fetch)
+    assert len(res.items) == 1
+    assert res.diagnostics.get("off_market_dropped", 0) == 0
+
+
+def test_market_filter_still_requires_text_match_for_global_language():
+    """The bypass above must NOT apply to a globally-used language (English here) — the
+    exact same scenario (India edition, no text/domain signal) must still be dropped,
+    since an English India-edition query still surfaces plenty of non-India content
+    (verified live: 89% of a real English "coffee" pull was off-market)."""
+    RSS = """<?xml version='1.0'?><rss version='2.0'><channel><title>GN</title>
+    <item><title>Black coffee for weight loss</title><link>http://gn/en</link>
+      <description>Black coffee for weight loss</description><pubDate>2026-08-01</pubDate></item>
+    </channel></rss>"""
+    ART = ("<html><body><article><h1>Black coffee for weight loss</h1>"
+           "<p>Doctors explain how black coffee affects metabolism and daily energy.</p>"
+           "</article></body></html>")
+
+    def fetch(url):
+        if "news.google.com/rss/search" in url:
+            return _Resp(RSS)
+        return _Resp(ART, url="https://global-health-news.example/x")
+
+    cfg = {
+        "relevance_terms": ["coffee"],
+        "market": {"country": "India", "country_code": "IN", "cctld": ".in",
+                   "market_terms": ["India", "Indian"], "languages": ["en"]},
+        "source_plan": {"google_news_feeds": [{"language": "en", "structure": "category_generic",
+            "url": "https://news.google.com/rss/search?q=coffee&hl=en-IN&gl=IN&ceid=IN:en"}],
+            "rss_feeds": []},
+        "collection_settings": {"news_chunk": "none", "market_filter": True},
+    }
+    res = news.collect(cfg, {"start_date": "2026-08-01", "end_date": "2026-08-31"}, fetch_fn=fetch)
+    assert len(res.items) == 0
+    assert res.diagnostics.get("off_market_dropped", 0) == 1
+
+
 def test_market_filter_can_be_disabled():
     def fetch(url):
         if "news.google.com/rss/search" in url:

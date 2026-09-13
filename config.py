@@ -154,6 +154,35 @@ def list_languages() -> List[Dict[str, str]]:
     return [dict(row) for row in LANGUAGE_TABLE]
 
 
+# Languages spoken/published as a majority or official language across MANY distinct
+# countries. Used by the news market gate (scrapers/news.py): a Google/Bing News edition
+# scoped to a specific country+language (gl=<ISO>&hl=<lang>-<ISO>) is, on its own, real
+# evidence an item is in-market ONLY when the language itself is not also used natively
+# far outside that country — otherwise the "country edition" can still surface globally-
+# syndicated content that has nothing to do with that country (verified live: an
+# English "coffee" query scoped to India's edition was still 89% non-India content).
+# A language NOT in this set is treated as country-exclusive enough that its own
+# country-scoped edition needs no additional textual market-term match — e.g. Telugu,
+# Tamil, Kannada, Malayalam, Punjabi, and Gujarati are, in practice, published almost
+# exclusively for/within India, so an article appearing in India's Telugu Google News
+# edition is essentially certain to be India-relevant even when its title never says
+# "India" (verified live: genuine India-published Telugu health/lifestyle coffee
+# articles from tv9telugu.com / ETV Bharat / Andhrajyothy that never mention the country
+# by name at all — the text-substring check alone was silently dropping most of them).
+# This list is intentionally an allowlist of "should still require a text match", not a
+# claim about which languages exist in only one country — Hindi and Urdu are each also
+# overwhelmingly one-country-associated in practice but are left off deliberately less
+# central here since they already had reasonable keep-rates from the text-match path;
+# revisit if that changes.
+GLOBAL_LANGUAGES = {"en", "es", "fr", "pt", "ar", "zh", "de", "ru", "it", "nl"}
+
+
+def is_language_country_exclusive_enough(language: str) -> bool:
+    """True if this language's own country-scoped news edition can stand as market
+    evidence on its own (see GLOBAL_LANGUAGES docstring above)."""
+    return bool(language) and language.lower() not in GLOBAL_LANGUAGES
+
+
 # Default "next page" labels per language for forum pagination. Editable per project.
 FORUM_NEXT_LABELS: Dict[str, List[str]] = {
     "en": ["next", "next page", "older", "older posts", "»", ">"],

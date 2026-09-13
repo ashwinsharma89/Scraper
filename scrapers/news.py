@@ -22,6 +22,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, quote_plus, urlparse, urlunparse
 
+from config import is_language_country_exclusive_enough
 from scrapers import relevance
 from scrapers.base import ScrapeResult, relevance_terms
 
@@ -447,7 +448,22 @@ def _collect_feed(url, terms, or_keywords, fetch, fetch_bodies, result, seen_lin
         outlet_domain = urlparse(outlet_url).netloc if outlet_url else ""
         gate_domain = outlet_domain or domain
         gate_hay = f"{title} {text} {summary_text} {entry.get('source','')} {outlet_domain}"
-        if mkt["only"] and not market_signal(gate_hay, gate_domain, mkt["terms"], mkt["cctld"]):
+        # A Google/Bing News query is already scoped to this feed's OWN
+        # language+country (built with gl=<our ISO>&hl=<lang>-<ISO> — see
+        # config.build_google_news_url). For a language that's essentially exclusive to
+        # this market (Telugu, Tamil, Kannada, ...), that scoping IS market evidence on
+        # its own — most local/lifestyle content never explicitly names the country by
+        # text (verified live: genuine India-published Telugu coffee articles that were
+        # being dropped purely because neither their title nor RSS summary said "India"
+        # in any script). This does NOT apply to globally-used languages (English,
+        # Spanish, ...) — see config.GLOBAL_LANGUAGES — where the same country-scoped
+        # edition still surfaces plenty of non-market content.
+        feed_language = (feed_meta or {}).get("language", "")
+        country_scoped_edition = (
+            is_google_news and mkt.get("cctld") and is_language_country_exclusive_enough(feed_language)
+        )
+        if (mkt["only"] and not country_scoped_edition
+                and not market_signal(gate_hay, gate_domain, mkt["terms"], mkt["cctld"])):
             result.diagnostics["off_market_dropped"] = result.diagnostics.get("off_market_dropped", 0) + 1
             continue
 

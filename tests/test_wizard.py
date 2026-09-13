@@ -242,6 +242,15 @@ def test_list_countries_dedupes_aliases_and_is_sorted():
     assert malaysia["iso"] == "MY"
 
 
+def test_is_language_country_exclusive_enough():
+    assert config.is_language_country_exclusive_enough("te") is True   # Telugu
+    assert config.is_language_country_exclusive_enough("ta") is True   # Tamil
+    assert config.is_language_country_exclusive_enough("en") is False  # global
+    assert config.is_language_country_exclusive_enough("es") is False  # global
+    assert config.is_language_country_exclusive_enough("") is False    # unknown -> no bypass
+    assert config.is_language_country_exclusive_enough("EN") is False  # case-insensitive
+
+
 def test_list_languages_is_a_defensive_copy():
     """Backs the intake wizard's language dropdown. Must return a fresh copy each call —
     a caller mutating the result must never corrupt the module-level reference table."""
