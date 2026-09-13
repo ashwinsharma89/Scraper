@@ -18,6 +18,7 @@ limitation is documented in the export Methodology.
 from __future__ import annotations
 
 import calendar
+import re
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, quote_plus, urlparse, urlunparse
@@ -224,12 +225,35 @@ def resolve_and_fetch(link: str, fetch) -> tuple:
 
 def market_signal(haystack: str, domain: str, market_terms: List[str], cctld: str) -> bool:
     """True if there's evidence the item is in-market. With no market config, always
-    True (no filtering). Country name matches its demonym via substring."""
+    True (no filtering). Country name matches its demonym via substring.
+
+    Matches on WORD BOUNDARIES, not a raw substring — real bug found live: a short
+    market_term that is also a substring of an unrelated common word (an outlet name
+    like "Digit" appearing inside "digital", or "VICE" inside "service"/"device"/
+    "advice") silently passed the gate on totally unrelated content. `\\b` is Unicode-
+    aware in Python's `re` (matches native-script word characters too — Devanagari,
+    Tamil, etc. — not just ASCII), so this is not an English-only fix; every existing
+    market_term (country names, demonyms, native-script names, outlet names) still
+    matches correctly, just no longer bleeds into an unrelated word that happens to
+    contain the same letters.
+
+    A `\\b` is only added on a side of the term whose edge character is itself a word
+    character — a term ending in punctuation (an outlet name like "afaqs!") would
+    otherwise never match at all: `\\b` requires a word/non-word transition, and
+    punctuation-to-space is non-word-to-non-word, not a boundary (verified live before
+    shipping this — a naive `\\bafaqs!\\b` matched nothing, ever).
+    """
     if not market_terms and not cctld:
         return True
     hay = (haystack or "").lower()
     for t in market_terms:
-        if t and t.lower() in hay:
+        t = (t or "").strip()
+        if not t:
+            continue
+        t_low = t.lower()
+        left = r"\b" if re.match(r"\w", t_low[0], re.UNICODE) else ""
+        right = r"\b" if re.match(r"\w", t_low[-1], re.UNICODE) else ""
+        if re.search(left + re.escape(t_low) + right, hay, re.UNICODE):
             return True
     if cctld and domain and domain.lower().endswith(cctld.lower()):
         return True

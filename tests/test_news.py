@@ -115,14 +115,40 @@ def test_decode_google_news_url_recovers_publisher():
 
 
 def test_market_signal_rules():
-    # Country name matches its demonym via substring.
-    assert news.market_signal("MAGGI backs Malaysian women", "site.com", ["Malaysia"], ".my") is True
+    # In real config the demonym is always present as its OWN term (config.py's
+    # market_terms = [name, demonym, ...]) — that's what actually catches "Malaysian".
+    assert news.market_signal("MAGGI backs Malaysian women", "site.com", ["Malaysia", "Malaysian"], ".my") is True
     # ccTLD match.
     assert news.market_signal("no geo words here", "nst.com.my", ["Malaysia"], ".my") is True
     # Neither -> off-market.
     assert news.market_signal("Pahari Maggi in Indian hills", "indianexpress.com", ["Malaysia"], ".my") is False
     # No market config -> never filters.
     assert news.market_signal("anything", "any.com", [], "") is True
+
+
+def test_market_signal_matches_on_word_boundaries_not_raw_substring():
+    """Real bug found live: a short market_term (an outlet name) that is also a
+    substring of an unrelated common word must NOT match. "Malaysia" alone (no
+    demonym term) correctly no longer matches "Malaysian" either — that reflects the
+    exact same imprecision this fix removes; production config always adds the
+    demonym as its own separate term (see test above), so this isn't a real loss."""
+    # The confirmed live false positive this fix closes.
+    assert news.market_signal("coffee house antidote to lonely digital lives",
+                              "ft.com", ["Digit"], ".in") is False
+    assert news.market_signal("great customer service here", "x.com", ["VICE"], ".in") is False
+    # But the term must still match when it's genuinely present as its own word.
+    assert news.market_signal("Digit reviews the latest coffee gadgets", "digit.in",
+                              ["Digit"], ".in") is True
+    # A term ending in punctuation (a real outlet name, "afaqs!") must still match —
+    # \b requires a word/non-word transition, so a naive \bterm\b that ends the pattern
+    # right after punctuation would never match at all (verified before shipping).
+    assert news.market_signal("afaqs! covers the ad industry", "afaqs.com",
+                              ["afaqs!"], ".in") is True
+    # Native-script terms (Unicode word characters) still match correctly.
+    assert news.market_signal("कॉफी की खबर आज", "x.com", ["कॉफी"], ".in") is True
+    # The coincidental substring-into-suffix bleed is gone when the demonym isn't its
+    # own term — this is the fix working as intended, not a regression.
+    assert news.market_signal("MAGGI backs Malaysian women", "site.com", ["Malaysia"], ".my") is False
 
 
 MY_RSS = """<?xml version='1.0'?><rss version='2.0'><channel><title>GN</title>
