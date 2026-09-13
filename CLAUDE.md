@@ -26,7 +26,7 @@ vanilla-JS SPA in `/static` (no build step). Pipeline the whole app is organized
 ## Commands
 ```bash
 source .venv/bin/activate
-python -m pytest -q          # 131 tests, ~1.9s, network mocked — MUST stay green
+python -m pytest -q          # 133 tests, ~1.3s, network mocked — MUST stay green
 python app.py                # http://localhost:8000
 python seed_demo.py          # recreate the Acme Cola / Singapore demo
 # reset local data after a run:

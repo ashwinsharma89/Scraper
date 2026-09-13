@@ -153,6 +153,12 @@ def api_create_user(request: Request, body: Dict[str, Any], user: str = Depends(
 # --------------------------------------------------------------------------- #
 # Projects + wizard
 # --------------------------------------------------------------------------- #
+@app.get("/api/reference/languages")
+def api_reference_languages(user: str = Depends(require_user)):
+    """Backs the intake wizard's language picker (single- and multi-select)."""
+    return config_mod.list_languages()
+
+
 @app.get("/api/projects")
 def api_projects(user: str = Depends(require_user)):
     return storage.list_projects()

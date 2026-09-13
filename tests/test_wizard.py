@@ -158,6 +158,20 @@ def test_wizard_scaffolds_empty_native_language_slots():
     assert by_lang["en"]["brand"] == ["Zeta"]
 
 
+def test_list_languages_is_a_defensive_copy():
+    """Backs the intake wizard's language dropdown. Must return a fresh copy each call —
+    a caller mutating the result must never corrupt the module-level reference table."""
+    langs = config.list_languages()
+    assert len(langs) > 20
+    codes = [l["code"] for l in langs]
+    assert len(codes) == len(set(codes))  # no duplicate codes
+    langs.append({"code": "xx", "name": "Bogus"})
+    langs[0]["name"] = "Tampered"
+    fresh = config.list_languages()
+    assert {"code": "xx", "name": "Bogus"} not in fresh
+    assert fresh[0]["name"] != "Tampered"
+
+
 def test_wizard_category_only_no_brand():
     """A category-wide study (e.g. "instant noodles in Malaysia") with no single target
     brand must produce a fully usable config — not a degraded/broken one. This is what

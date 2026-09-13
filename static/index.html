@@ -62,8 +62,12 @@
       <form id="wizard-form">
         <fieldset><legend>Market</legend>
           <label>Country / region <input name="country" placeholder="e.g. Singapore" required /></label>
-          <label>Target languages (comma-separated ISO codes)
-            <input name="languages" placeholder="e.g. en, zh, ms, ta" required /></label>
+          <label>Target languages
+            <select name="languages" id="wizard-languages" multiple size="8"></select></label>
+          <p class="muted">Click to select one, or Cmd/Ctrl-click (Shift-click for a range)
+            to select several.</p>
+          <label>Other language codes (optional, comma-separated — if not in the list above)
+            <input name="languages_other" placeholder="e.g. haw, gsw" /></label>
         </fieldset>
         <fieldset><legend>Product</legend>
           <p class="muted">Give a brand name, a product category, or both — e.g. a

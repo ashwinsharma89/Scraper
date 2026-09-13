@@ -92,6 +92,22 @@ def test_version_and_mode_endpoints(client):
     assert r.json()["version"] == __version__
 
 
+def test_reference_languages_backs_the_wizard_dropdown(client, monkeypatch):
+    # Powers the intake wizard's single/multi-select language picker.
+    monkeypatch.setenv("MODE", "solo")
+    r = client.get("/api/reference/languages")
+    assert r.status_code == 200
+    langs = r.json()
+    assert len(langs) > 20
+    codes = {l["code"] for l in langs}
+    names = {l["code"]: l["name"] for l in langs}
+    assert {"en", "zh", "ms", "ta", "hi", "es", "fr"} <= codes
+    assert names["en"] == "English"
+    # No dupes, every row has both fields.
+    assert len(codes) == len(langs)
+    assert all(l.get("code") and l.get("name") for l in langs)
+
+
 def test_health_reports_key_presence_not_values(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     import settings as settings_mod

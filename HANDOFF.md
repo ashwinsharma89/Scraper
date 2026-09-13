@@ -33,7 +33,7 @@ context. Read `README.md` for the product overview; this file is the *engineerin
 cd /Users/ashwin/Desktop/marketlens
 source .venv/bin/activate              # venv already exists (Python 3.13)
 python app.py                          # http://localhost:8000
-python -m pytest -q                    # 131 tests, all should pass, ~1.9s (network mocked)
+python -m pytest -q                    # 133 tests, all should pass, ~1.3s (network mocked)
 python seed_demo.py                    # (re)create the Acme Cola / Singapore demo project
 ```
 
@@ -85,6 +85,13 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 - Distribution: team auth, archive import/export, scheduler, Docker, setup scripts, README.
 - SPA: 4-step workflow stepper, per-tab help, key-detection chips, **Items browser** (filter
   by channel/brand_focus/sentiment/search), Collect market toggle.
+- **Target-languages picker**: intake wizard's language field is a native `<select multiple>`
+  (single- AND multi-select in one control — click for one, Cmd/Ctrl/Shift-click for
+  several) backed by `config.LANGUAGE_TABLE`/`list_languages()` (54 ISO 639-1 languages,
+  a generic reference table) via `GET /api/reference/languages`. A free-text "other codes"
+  field alongside it covers anything not in the list, so no language is ever unreachable.
+  Live-verified in the browser: selected Bulgarian + Croatian via click + Cmd-click,
+  submitted, and the created project's config carried exactly `["bg","hr"]`.
 - Demo: `seed_demo.py` (Acme Cola / Singapore — fictional, no fabricated data).
 - **Four structural gaps closed** (a dedicated session pass — see §11 for design rationale
   on each; all live-verified against real Malaysia/Maggi data, not just unit tests):

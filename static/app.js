@@ -123,7 +123,19 @@ async function selectProject(pid) {
 }
 
 // Wizard
-function openWizard() { el("wizard-modal").classList.remove("hidden"); }
+let _languageOptionsLoaded = false;
+async function loadLanguageOptions() {
+  if (_languageOptionsLoaded) return;
+  const sel = el("wizard-languages");
+  try {
+    const langs = await api("/api/reference/languages");
+    sel.innerHTML = langs.map(l => `<option value="${esc(l.code)}">${esc(l.name)} (${esc(l.code)})</option>`).join("");
+    _languageOptionsLoaded = true;
+  } catch (e) {
+    // Non-fatal — the "Other language codes" free-text field still works without this.
+  }
+}
+function openWizard() { el("wizard-modal").classList.remove("hidden"); loadLanguageOptions(); }
 el("new-project-btn").addEventListener("click", openWizard);
 el("empty-new-btn").addEventListener("click", openWizard);
 document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () =>
@@ -139,9 +151,13 @@ el("wizard-form").addEventListener("submit", async (e) => {
     toast("Provide a brand name, a product category, or both.", true);
     return;
   }
+  // Selected dropdown languages (supports single AND multi-select) + any free-text
+  // "other" codes for languages not in the reference list, de-duped.
+  const picked = f.getAll("languages").map(x => x.trim()).filter(Boolean);
+  const languages = [...new Set([...picked, ...csv("languages_other")])];
   const intake = {
     name: brand || category,
-    market: { country: f.get("country"), languages: csv("languages").length ? csv("languages") : ["en"] },
+    market: { country: f.get("country"), languages: languages.length ? languages : ["en"] },
     product: { brand, parent_company: f.get("parent_company"),
                category, category_type: f.get("category_type") },
     competitors: csv("competitors"),

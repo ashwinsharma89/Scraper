@@ -64,6 +64,80 @@ CATEGORY_TYPES = [
 # Which category types plausibly have delivery / quick-commerce distribution.
 DELIVERY_APPLICABLE = {"fmcg_food"}
 
+# ISO 639-1 codes + English names — powers the intake wizard's language dropdown
+# (single AND multi-select via a native <select multiple>). A generic reference table,
+# same category as COUNTRY_TABLE: facts about the world, not about any project. This is
+# NOT an exhaustive ISO 639-1 list — it's the languages this tool has real, meaningful
+# support for (FORUM_NEXT_LABELS pagination detection, tested relevance/market-filter
+# behavior) plus enough major-market coverage to be broadly useful. A language missing
+# from this list still works end-to-end (every downstream consumer keys off whatever
+# code the project config carries, and FORUM_NEXT_LABELS.get(lang, [...]["en"]) falls
+# back to English labels for anything unlisted) — it just won't appear as a dropdown
+# option, so the UI also accepts free-text "other" codes alongside the picker.
+LANGUAGE_TABLE: List[Dict[str, str]] = [
+    {"code": "ar", "name": "Arabic"},
+    {"code": "bn", "name": "Bengali"},
+    {"code": "bg", "name": "Bulgarian"},
+    {"code": "my", "name": "Burmese"},
+    {"code": "zh", "name": "Chinese"},
+    {"code": "hr", "name": "Croatian"},
+    {"code": "cs", "name": "Czech"},
+    {"code": "da", "name": "Danish"},
+    {"code": "nl", "name": "Dutch"},
+    {"code": "en", "name": "English"},
+    {"code": "et", "name": "Estonian"},
+    {"code": "tl", "name": "Filipino (Tagalog)"},
+    {"code": "fi", "name": "Finnish"},
+    {"code": "fr", "name": "French"},
+    {"code": "de", "name": "German"},
+    {"code": "el", "name": "Greek"},
+    {"code": "gu", "name": "Gujarati"},
+    {"code": "he", "name": "Hebrew"},
+    {"code": "hi", "name": "Hindi"},
+    {"code": "hu", "name": "Hungarian"},
+    {"code": "id", "name": "Indonesian"},
+    {"code": "it", "name": "Italian"},
+    {"code": "ja", "name": "Japanese"},
+    {"code": "kn", "name": "Kannada"},
+    {"code": "km", "name": "Khmer"},
+    {"code": "ko", "name": "Korean"},
+    {"code": "lo", "name": "Lao"},
+    {"code": "lv", "name": "Latvian"},
+    {"code": "lt", "name": "Lithuanian"},
+    {"code": "ms", "name": "Malay"},
+    {"code": "ml", "name": "Malayalam"},
+    {"code": "mr", "name": "Marathi"},
+    {"code": "ne", "name": "Nepali"},
+    {"code": "no", "name": "Norwegian"},
+    {"code": "fa", "name": "Persian"},
+    {"code": "pl", "name": "Polish"},
+    {"code": "pt", "name": "Portuguese"},
+    {"code": "pa", "name": "Punjabi"},
+    {"code": "ro", "name": "Romanian"},
+    {"code": "ru", "name": "Russian"},
+    {"code": "sr", "name": "Serbian"},
+    {"code": "si", "name": "Sinhala"},
+    {"code": "sk", "name": "Slovak"},
+    {"code": "sl", "name": "Slovenian"},
+    {"code": "es", "name": "Spanish"},
+    {"code": "sw", "name": "Swahili"},
+    {"code": "sv", "name": "Swedish"},
+    {"code": "ta", "name": "Tamil"},
+    {"code": "te", "name": "Telugu"},
+    {"code": "th", "name": "Thai"},
+    {"code": "tr", "name": "Turkish"},
+    {"code": "uk", "name": "Ukrainian"},
+    {"code": "ur", "name": "Urdu"},
+    {"code": "vi", "name": "Vietnamese"},
+]
+
+
+def list_languages() -> List[Dict[str, str]]:
+    """Return the language reference table (copy — callers must not mutate the module-level
+    list)."""
+    return [dict(row) for row in LANGUAGE_TABLE]
+
+
 # Default "next page" labels per language for forum pagination. Editable per project.
 FORUM_NEXT_LABELS: Dict[str, List[str]] = {
     "en": ["next", "next page", "older", "older posts", "»", ">"],
