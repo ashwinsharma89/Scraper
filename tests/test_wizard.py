@@ -156,3 +156,28 @@ def test_wizard_scaffolds_empty_native_language_slots():
     assert by_lang["hi"]["brand"] == []
     # Primary language seeded from intake only.
     assert by_lang["en"]["brand"] == ["Zeta"]
+
+
+def test_wizard_category_only_no_brand():
+    """A category-wide study (e.g. "instant noodles in Malaysia") with no single target
+    brand must produce a fully usable config — not a degraded/broken one. This is what
+    lets a search be scoped to a product category alone."""
+    intake = {
+        "market": {"country": "Malaysia", "languages": ["en", "ms"]},
+        "product": {"brand": "", "category": "instant noodles", "category_type": "fmcg_food"},
+        "competitors": ["Indomie"],
+        "keywords": {"trend_terms": ["spicy"]},
+    }
+    cfg = config.run_wizard(intake)
+    assert cfg["product"]["brand"] == ""
+    # Relevance terms still populated: category tokens + competitors, just no brand token.
+    rt = [t.lower() for t in cfg["relevance_terms"]]
+    assert "instant" in rt and "noodles" in rt and "indomie" in rt
+    # Keyword scaffold: brand-derived slots stay empty, category_generic still seeded.
+    en_slots = cfg["keywords"]["by_language"]["en"]
+    assert en_slots["brand"] == [] and en_slots["brand_price"] == [] and en_slots["brand_complaint"] == []
+    assert en_slots["category_generic"] == ["instant noodles"]
+    # Google Business query needs a named entity — correctly left empty, not "  Malaysia".
+    assert cfg["source_plan"]["google_business"]["query"] == ""
+    # Trends still gets keywords (falls back to relevance_terms when no trend-specific ones apply).
+    assert cfg["source_plan"]["trends"]["keywords"] == ["spicy"]

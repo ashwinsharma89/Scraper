@@ -34,6 +34,33 @@ def test_solo_mode_allows_unauthenticated(client, monkeypatch):
     assert r.json()["config"]["market"]["country_code"] == "SG"
 
 
+def test_wizard_rejects_study_with_neither_brand_nor_category(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["product"] = {"brand": "", "category": "", "category_type": "fmcg_food"}
+    r = client.post("/api/projects/wizard", json=intake)
+    assert r.status_code == 400
+    assert "brand" in r.json()["detail"].lower()
+
+
+def test_wizard_allows_category_only_study_with_no_brand(client, monkeypatch):
+    # A category-wide study (e.g. "instant noodles in Malaysia") with no single target
+    # brand must be creatable — brand is an optional anchor, not a required one.
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["product"] = {"brand": "", "category": "instant noodles", "category_type": "fmcg_food"}
+    r = client.post("/api/projects/wizard", json=intake)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["config"]["product"]["brand"] == ""
+    assert body["config"]["product"]["category"] == "instant noodles"
+    # Name falls back to category when brand is absent, not "Untitled study".
+    assert body["name"] == "instant noodles"
+    # Relevance terms still get populated from the category alone.
+    assert any("instant" in t.lower() or "noodles" in t.lower()
+               for t in body["config"]["relevance_terms"])
+
+
 def test_team_mode_rejects_unauthenticated(client, monkeypatch):
     monkeypatch.setenv("MODE", "team")
     for path in ["/api/projects", "/api/projects/1", "/api/channels"]:

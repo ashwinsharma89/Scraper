@@ -12,6 +12,12 @@ vanilla-JS SPA in `/static` (no build step). Pipeline the whole app is organized
 ## Non-negotiable principles (this IS the product)
 1. **Never fabricate or simulate data.** On failure, surface the error honestly, store nothing.
 2. **No hard-coding** of brand / product / category / country / language — all from config.
+   **Brand is an optional anchor, not required** — a study can be category-only (e.g.
+   "instant noodles in Malaysia", no single target brand). Intake requires brand OR
+   category OR both (enforced in `app.py`'s wizard endpoint AND the intake form JS).
+   `source_discovery.py`'s AI-suggest prompt and `config.py`'s relevance-term/keyword
+   scaffolding both already adapt to an empty brand — don't re-introduce a "the brand"
+   assumption if you touch either.
 3. **Tests mock all network; keep the suite green** after every change.
 4. **Secrets from `.env` only** — never committed, never in the DB in plaintext.
 5. **Precision over volume** — a keyword in a page's related-links footer is not a hit;
@@ -20,7 +26,7 @@ vanilla-JS SPA in `/static` (no build step). Pipeline the whole app is organized
 ## Commands
 ```bash
 source .venv/bin/activate
-python -m pytest -q          # 127 tests, ~1.3s, network mocked — MUST stay green
+python -m pytest -q          # 131 tests, ~1.9s, network mocked — MUST stay green
 python app.py                # http://localhost:8000
 python seed_demo.py          # recreate the Acme Cola / Singapore demo
 # reset local data after a run:

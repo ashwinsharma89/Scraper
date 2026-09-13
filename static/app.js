@@ -133,11 +133,17 @@ el("wizard-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
   const csv = (s) => (f.get(s) || "").split(",").map(x => x.trim()).filter(Boolean);
+  const brand = (f.get("brand") || "").trim();
+  const category = (f.get("category") || "").trim();
+  if (!brand && !category) {
+    toast("Provide a brand name, a product category, or both.", true);
+    return;
+  }
   const intake = {
-    name: f.get("brand"),
+    name: brand || category,
     market: { country: f.get("country"), languages: csv("languages").length ? csv("languages") : ["en"] },
-    product: { brand: f.get("brand"), parent_company: f.get("parent_company"),
-               category: f.get("category"), category_type: f.get("category_type") },
+    product: { brand, parent_company: f.get("parent_company"),
+               category, category_type: f.get("category_type") },
     competitors: csv("competitors"),
     keywords: { trend_terms: csv("trend_terms") },
   };
@@ -240,7 +246,7 @@ async function viewOverview(root) {
     <div class="card-head"><h2>${esc(State.project.name)}</h2>
       <a href="/api/projects/${State.projectId}/config.yaml" target="_blank" class="muted">config.yaml ↗</a></div>
     <div class="grid">
-      ${stat("Brand", cfg.product.brand)}
+      ${stat("Brand", cfg.product.brand || "— (category-only study)")}
       ${stat("Market", cfg.market.country + " (" + (cfg.market.country_code||"?") + ")")}
       ${stat("Languages", (cfg.market.languages||[]).join(", "))}
       ${stat("Category", cfg.product.category + " / " + cfg.product.category_type)}
@@ -327,8 +333,9 @@ function viewSources(root) {
 // --------------------------------------------------------------------------- //
 async function suggestSources() {
   const box = el("suggest-results");
+  const prod = State.project.config.product || {};
   box.innerHTML = `<div class="note">Asking Claude for candidate sources for
-    <b>${esc((State.project.config.product||{}).brand||'')}</b> in
+    <b>${esc(prod.brand || prod.category || '')}</b> in
     <b>${esc((State.project.config.market||{}).country||'')}</b>, then validating each link…
     (needs ANTHROPIC_API_KEY; ~10–25s)</div>`;
   try {

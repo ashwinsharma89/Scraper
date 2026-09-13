@@ -160,8 +160,15 @@ def api_projects(user: str = Depends(require_user)):
 
 @app.post("/api/projects/wizard")
 def api_wizard(intake: Dict[str, Any], user: str = Depends(require_user)):
+    # A study needs at least one anchor to generate keywords/relevance terms from — brand
+    # OR category — but neither is hard-required on its own. This is what lets a
+    # category-only study (e.g. "instant noodles in Malaysia", no single target brand) work.
+    product = intake.get("product", {}) or {}
+    if not (product.get("brand") or "").strip() and not (product.get("category") or "").strip():
+        raise HTTPException(status_code=400,
+                             detail="Provide a brand name, a product category, or both.")
     cfg = config_mod.run_wizard(intake)
-    name = intake.get("name") or cfg["product"]["brand"] or "Untitled study"
+    name = intake.get("name") or cfg["product"]["brand"] or cfg["product"]["category"] or "Untitled study"
     pid = storage.create_project(name, cfg)
     storage.audit("project.create", name, acting_user=user, project_id=pid)
     return {"id": pid, "name": name, "config": cfg}

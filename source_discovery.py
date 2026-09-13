@@ -30,10 +30,22 @@ def build_prompt(cfg: Dict[str, Any]) -> str:
     ctype = product.get("category_type", "")
     competitors = ", ".join(cfg.get("competitors", []) or [])
 
+    # A study can be brand-anchored, category-anchored (no single target brand), or both —
+    # run_wizard/api_wizard already guarantee at least one is non-empty. The e-commerce
+    # search-query guidance below must adapt: "use the brand as the query" is meaningless
+    # (and was literally an empty string) for a category-only study.
+    if brand:
+        subject = f"the product \"{brand}\" (category: {category or 'unspecified'}; type: {ctype})"
+        query_term = brand
+    else:
+        subject = (f"the product category \"{category}\" (type: {ctype}) generally — this is "
+                   f"a category-wide study with no single target brand")
+        query_term = category
+
     return "\n".join([
-        f"You are configuring market-research data sources for a study of the product "
-        f"\"{brand}\" (category: {category}; type: {ctype}) in the market: {country}. "
-        f"Relevant languages: {languages}. Competitors: {competitors or '(none given)'}.",
+        f"You are configuring market-research data sources for a study of {subject} "
+        f"in the market: {country}. Relevant languages: {languages}. "
+        f"Competitors: {competitors or '(none given)'}.",
         "",
         "Propose REAL, well-known sources that actually exist in this market. Do NOT invent "
         "URLs or brands. If unsure of an exact path, give the platform's real base domain. "
@@ -43,8 +55,8 @@ def build_prompt(cfg: Dict[str, Any]) -> str:
         '  "news_rss": [ {"home": "<homepage URL of a real news outlet in this market>", '
         '"url": "<its RSS feed URL if you know it, else \\"\\">", "outlet": "<name>", '
         '"why": "<short reason>"} ]',
-        '  "ecommerce": [ {"url": "<a SEARCH URL on a real marketplace in this market, with the '
-        f'brand \\"{brand}\\" as the query>", "platform": "<name>", "why": "<reason>"}} ]',
+        '  "ecommerce": [ {"url": "<a SEARCH URL on a real marketplace in this market, with '
+        f'\\"{query_term}\\" as the query>", "platform": "<name>", "why": "<reason>"}} ]',
         '  "forums": [ {"url": "<a real discussion forum URL relevant to the category/market>", '
         '"name": "<name>", "why": "<reason>"} ]',
         '  "subreddits": [ "<subreddit name without r/>", ... ]',
@@ -54,7 +66,7 @@ def build_prompt(cfg: Dict[str, Any]) -> str:
         'manual/Tier-3, not scraped>"',
         "",
         "Rules:",
-        "- e-commerce URLs MUST be search URLs that include the brand as the query term.",
+        f"- e-commerce URLs MUST be search URLs that include \"{query_term}\" as the query term.",
         "- Mark any app-only quick-commerce/delivery platform web_scrapable=false (it becomes a "
         "documented gap, not a scraper).",
         "- Only include sources genuinely present in this market.",

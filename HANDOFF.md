@@ -33,7 +33,7 @@ context. Read `README.md` for the product overview; this file is the *engineerin
 cd /Users/ashwin/Desktop/marketlens
 source .venv/bin/activate              # venv already exists (Python 3.13)
 python app.py                          # http://localhost:8000
-python -m pytest -q                    # 127 tests, all should pass, ~1.3s (network mocked)
+python -m pytest -q                    # 131 tests, all should pass, ~1.9s (network mocked)
 python seed_demo.py                    # (re)create the Acme Cola / Singapore demo project
 ```
 
@@ -153,6 +153,20 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
      review-interception heuristic even after scrolling — deliberately NOT chased further
      (fragile, site-specific, could break on the next redesign, against this tool's own
      philosophy); page-level text (titles/prices/descriptions) is still real, working signal.
+- **Category-only studies (no single target brand) are now fully supported.** Until this
+  change, `brand` was a hard `required` field in the intake form — but the backend
+  (`config.py`'s relevance-term derivation, keyword scaffolding, `analysis.py`'s
+  `brand_focus` vocabulary which already had a `"category-generic"` bucket) was already
+  brand-optional; only the intake form and one prompt-builder assumed brand always exists.
+  Fixed: intake now requires brand OR category OR both (enforced server-side in `app.py`'s
+  `/api/projects/wizard`, not just the form JS); `source_discovery.py`'s AI-suggest prompt
+  no longer sends `the product ""` / an empty e-commerce query term when brand is absent —
+  it describes the study as category-wide and uses the category as the query term instead.
+  Live-verified end-to-end against the running server: a "Malaysia / instant noodles / no
+  brand / competitor=Indomie" study created cleanly (HTTP 200), named itself "instant
+  noodles" (not "Untitled study"), derived `relevance_terms: ["Indomie","instant","noodles"]`,
+  generated real working Google+Bing News RSS URLs from the category term, and correctly
+  left `google_business.query` empty (no named entity to search for a business listing).
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 

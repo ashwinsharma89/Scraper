@@ -96,3 +96,20 @@ def test_prompt_includes_market_and_brand():
     p = source_discovery.build_prompt(_cfg())
     assert "Malaysia" in p and "Maggi" in p and "instant noodles" in p
     assert "search URL" in p.lower() or "SEARCH URL" in p
+
+
+def test_prompt_uses_category_as_query_when_brand_absent():
+    """A category-only study (no single target brand) must not send an empty-quoted
+    query to the model — it should fall back to the category as the e-commerce query
+    term and describe the study as category-wide, not as "the product \"\"."""
+    cfg = config.run_wizard({
+        "market": {"country": "Malaysia", "languages": ["en", "ms"]},
+        "product": {"brand": "", "category": "instant noodles", "category_type": "fmcg_food"},
+        "competitors": ["Indomie"],
+    })
+    p = source_discovery.build_prompt(cfg)
+    assert 'the product ""' not in p
+    assert "instant noodles" in p
+    assert "no single target brand" in p
+    # e-commerce query guidance uses the category, not an empty string.
+    assert '"instant noodles" as the query' in p
