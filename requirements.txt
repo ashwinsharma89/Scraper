@@ -10,6 +10,7 @@ beautifulsoup4>=4.12
 lxml>=5.0
 feedparser>=6.0
 playwright>=1.42           # e-commerce (lazy-imported; needs `playwright install`)
+trafilatura>=1.8           # generic site main-content extraction (lazy-imported)
 
 # --- Analysis / vision ---
 anthropic>=0.40            # Claude API (lazy-imported)
