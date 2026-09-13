@@ -1,5 +1,8 @@
 """End-to-end wiring of §1-§4 for one source type (DESIGN_01 §13 Increment 4's pilot
 mechanism). Network fully mocked via injected probe/fetch functions."""
+import threading
+import time
+
 import discovery_pipeline as dp
 import storage
 
@@ -253,3 +256,219 @@ def test_pilot_records_success_and_keeps_a_healthy_domain_unpaused(fresh_db):
     row = storage.get_source_health(pid, "good.example")
     assert row["paused"] == 0
     assert row["consecutive_failures"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# run_source_type_job: concurrency + resumability + real item persistence
+# (DESIGN_01 §8/§9, increment 6)
+# --------------------------------------------------------------------------- #
+OTHER_URLSET = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://other.example/coffee/relevant-1</loc></url>
+</urlset>"""
+
+
+def _sitemap_fetch_multi(url):
+    if url.startswith("https://good.example"):
+        return _Resp(URLSET)
+    if url.startswith("https://other.example"):
+        return _Resp(OTHER_URLSET)
+    return _Resp("", status=404)
+
+
+def test_job_creates_a_real_run_and_returns_its_id(fresh_db):
+    pid = storage.create_project("P", {})
+    page_fetch = _page_fetch_for({
+        "https://good.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+        "https://good.example/coffee/relevant-2": ARTICLE_ABOUT_SOMETHING_ELSE,
+    })
+    report = dp.run_source_type_job(
+        pid, "coffee", ["good.example"], keywords=["coffee"], relevance_terms=["coffee"],
+        probe_fn=_reachable_probe, sitemap_fetch_fn=_sitemap_fetch, page_fetch_fn=page_fetch,
+    )
+    run = storage.get_run(report["run_id"])
+    assert run is not None
+    assert run["status"] == "done"
+    assert run["job_kind"] == "backfill"
+
+
+def test_job_persists_real_items_with_raw_html_category_source_type(fresh_db):
+    pid = storage.create_project("P", {})
+    page_fetch = _page_fetch_for({
+        "https://good.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+        "https://good.example/coffee/relevant-2": ARTICLE_ABOUT_SOMETHING_ELSE,
+    })
+    report = dp.run_source_type_job(
+        pid, "coffee", ["good.example"], keywords=["coffee"], relevance_terms=["coffee"],
+        probe_fn=_reachable_probe, sitemap_fetch_fn=_sitemap_fetch, page_fetch_fn=page_fetch,
+    )
+    items = storage.list_items(pid, source="generic_site")
+    assert len(items) == 1  # only the genuinely relevant one was persisted
+    assert items[0]["category"] == "coffee"
+    assert items[0]["source_type"] == "generic_site"
+    assert items[0]["raw_html"] == ARTICLE_ABOUT_COFFEE
+    assert report["_summary"]["pages_relevant"] == 1
+
+
+def test_job_without_relevance_terms_persists_nothing(fresh_db):
+    """No real relevance verdict -> nothing durable is stored, matching the same
+    honesty rule the pilot already applies to the ledger."""
+    pid = storage.create_project("P", {})
+    page_fetch = _page_fetch_for({
+        "https://good.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+        "https://good.example/coffee/relevant-2": ARTICLE_ABOUT_SOMETHING_ELSE,
+    })
+    dp.run_source_type_job(
+        pid, "coffee", ["good.example"], keywords=["coffee"],
+        probe_fn=_reachable_probe, sitemap_fetch_fn=_sitemap_fetch, page_fetch_fn=page_fetch,
+    )
+    assert storage.list_items(pid, source="generic_site") == []
+
+
+def test_job_checkpoints_each_domain_as_it_completes(fresh_db):
+    pid = storage.create_project("P", {})
+    page_fetch = _page_fetch_for({
+        "https://good.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+        "https://good.example/coffee/relevant-2": ARTICLE_ABOUT_SOMETHING_ELSE,
+        "https://other.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+    })
+    report = dp.run_source_type_job(
+        pid, "coffee", ["good.example", "other.example"], keywords=["coffee"],
+        relevance_terms=["coffee"], probe_fn=_reachable_probe,
+        sitemap_fetch_fn=_sitemap_fetch_multi, page_fetch_fn=page_fetch,
+    )
+    cp = storage.get_run_checkpoint(report["run_id"])
+    assert set(cp["domains_done"].keys()) == {"good.example", "other.example"}
+    # Checkpoint stores slim summaries, not full article text.
+    assert "items" not in cp["domains_done"]["good.example"]
+
+
+def test_job_resumes_and_skips_already_completed_domains(fresh_db):
+    """The core resumability guarantee: a second call sharing run_id must not
+    re-fetch a domain the first call already finished."""
+    pid = storage.create_project("P", {})
+    calls = {"good.example": 0, "other.example": 0}
+
+    def sitemap_fetch(url):
+        for d in calls:
+            if url.startswith(f"https://{d}"):
+                calls[d] += 1
+        return _sitemap_fetch_multi(url)
+
+    page_fetch = _page_fetch_for({
+        "https://good.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+        "https://good.example/coffee/relevant-2": ARTICLE_ABOUT_SOMETHING_ELSE,
+        "https://other.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+    })
+
+    # "Run 1" only processes good.example (simulating a job that only got this far
+    # before a crash/restart -- run_source_type_job itself doesn't crash, we just
+    # call it once per domain to model the checkpoint state a real crash would leave).
+    first = dp.run_source_type_job(
+        pid, "coffee", ["good.example"], keywords=["coffee"], relevance_terms=["coffee"],
+        probe_fn=_reachable_probe, sitemap_fetch_fn=sitemap_fetch, page_fetch_fn=page_fetch,
+    )
+    assert calls["good.example"] == 1
+    run_id = first["run_id"]
+
+    # "Run 2" resumes the SAME run_id with the full domain list -- good.example must
+    # be skipped (already checkpointed), only other.example actually fetched.
+    second = dp.run_source_type_job(
+        pid, "coffee", ["good.example", "other.example"], keywords=["coffee"],
+        relevance_terms=["coffee"], run_id=run_id, probe_fn=_reachable_probe,
+        sitemap_fetch_fn=sitemap_fetch, page_fetch_fn=page_fetch,
+    )
+    assert calls["good.example"] == 1  # NOT re-fetched
+    assert calls["other.example"] == 1
+    assert second["resumed_domains"] == 1
+    assert second["run_id"] == run_id
+    # Final totals reflect the WHOLE job (both domains), not just this call's subset.
+    assert second["_summary"]["sites_reachable"] == 2
+    assert len(storage.list_items(pid, source="generic_site")) == 2
+
+
+def test_job_domains_run_concurrently_not_sequentially(fresh_db):
+    """Real proof of §8's throughput claim: two domains whose page fetch each sleeps
+    briefly must complete in roughly ONE sleep's worth of wall time, not two, when
+    processed through the thread pool."""
+    pid = storage.create_project("P", {})
+
+    def slow_page_fetch(url):
+        time.sleep(0.15)
+        return _Resp(ARTICLE_ABOUT_COFFEE)
+
+    t0 = time.monotonic()
+    dp.run_source_type_job(
+        pid, "coffee", ["good.example", "other.example"], keywords=["coffee"],
+        relevance_terms=["coffee"], max_workers=2, probe_fn=_reachable_probe,
+        sitemap_fetch_fn=_sitemap_fetch_multi, page_fetch_fn=slow_page_fetch,
+    )
+    elapsed = time.monotonic() - t0
+    # Sequential would be >= 3 * 0.15s (3 total page fetches across both domains);
+    # concurrent (2 workers) should finish well under that.
+    assert elapsed < 0.15 * 3 * 0.8
+
+
+def test_job_requires_a_project_id_to_be_meaningful():
+    """project_id is a required positional arg (unlike run_source_type_pilot) --
+    confirms the signature enforces this rather than silently accepting None."""
+    import inspect
+    sig = inspect.signature(dp.run_source_type_job)
+    assert list(sig.parameters)[0] == "project_id"
+    assert sig.parameters["project_id"].default is inspect.Parameter.empty
+
+
+def test_job_marks_status_done_with_errors_when_a_worker_raises(fresh_db):
+    pid = storage.create_project("P", {})
+
+    def boom_probe(url):
+        if "bad" in url:
+            raise RuntimeError("simulated crash")
+        return _reachable_probe(url)
+
+    report = dp.run_source_type_job(
+        pid, "coffee", ["good.example", "bad.example"], keywords=["coffee"],
+        relevance_terms=["coffee"], probe_fn=boom_probe,
+        sitemap_fetch_fn=_sitemap_fetch_multi,
+        page_fetch_fn=_page_fetch_for({
+            "https://good.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+            "https://good.example/coffee/relevant-2": ARTICLE_ABOUT_SOMETHING_ELSE,
+        }),
+    )
+    assert len(report["errors"]) == 1
+    assert "simulated crash" in report["errors"][0]
+    run = storage.get_run(report["run_id"])
+    assert run["status"] == "done_with_errors"
+
+
+def test_domain_concurrency_cap_serializes_two_overlapping_jobs_on_the_same_domain(fresh_db):
+    """The realistic scenario §7.2 exists for: a daily job and a manual backfill both
+    targeting the same domain at the same time. Two SEPARATE run_source_type_job calls
+    (different runs) racing on "good.example" must never fetch it concurrently."""
+    pid = storage.create_project("P", {})
+    concurrent = {"current": 0, "max_seen": 0}
+    lock = threading.Lock()
+
+    def slow_page_fetch(url):
+        with lock:
+            concurrent["current"] += 1
+            concurrent["max_seen"] = max(concurrent["max_seen"], concurrent["current"])
+        time.sleep(0.1)
+        with lock:
+            concurrent["current"] -= 1
+        return _Resp(ARTICLE_ABOUT_COFFEE)
+
+    def run_job():
+        dp.run_source_type_job(
+            pid, "coffee", ["good.example"], keywords=["coffee"], relevance_terms=["coffee"],
+            probe_fn=_reachable_probe, sitemap_fetch_fn=_sitemap_fetch,
+            page_fetch_fn=slow_page_fetch,
+        )
+
+    threads = [threading.Thread(target=run_job) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert concurrent["max_seen"] == 1

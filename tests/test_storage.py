@@ -7,6 +7,60 @@ def _item(link, title="T", text="body text here", source="news"):
     return {"link": link, "title": title, "text": text}
 
 
+def test_save_items_persists_raw_html_category_source_type(fresh_db):
+    pid = storage.create_project("P", {})
+    r = storage.start_run(pid, "generic_site", {})
+    storage.save_items(pid, r, "generic_site", [
+        {"link": "http://x.com/a", "title": "T", "text": "body text here",
+         "raw_html": "<html>real</html>", "category": "coffee", "source_type": "lifestyle"},
+    ])
+    item = storage.list_items(pid)[0]
+    assert item["raw_html"] == "<html>real</html>"
+    assert item["category"] == "coffee"
+    assert item["source_type"] == "lifestyle"
+
+
+def test_save_items_without_raw_html_fields_is_unchanged(fresh_db):
+    """Every existing caller (10 fixed channels) never passes these -- confirms they
+    still get a clean NULL, not an error or a forced default."""
+    pid = storage.create_project("P", {})
+    r = storage.start_run(pid, "news", {})
+    storage.save_items(pid, r, "news", [_item("http://x.com/a")])
+    item = storage.list_items(pid)[0]
+    assert item["raw_html"] is None
+    assert item["category"] is None
+    assert item["source_type"] is None
+
+
+def test_start_run_persists_job_kind(fresh_db):
+    pid = storage.create_project("P", {})
+    r = storage.start_run(pid, "generic_site", {}, job_kind="backfill")
+    assert storage.get_run(r)["job_kind"] == "backfill"
+
+
+def test_start_run_job_kind_defaults_to_none(fresh_db):
+    pid = storage.create_project("P", {})
+    r = storage.start_run(pid, "news", {})
+    assert storage.get_run(r)["job_kind"] is None
+
+
+def test_run_checkpoint_round_trips(fresh_db):
+    pid = storage.create_project("P", {})
+    r = storage.start_run(pid, "generic_site", {})
+    assert storage.get_run_checkpoint(r) == {}  # nothing checkpointed yet
+    storage.update_run_checkpoint(r, {"domains_done": {"a.com": {"pages_ok": 3}}})
+    assert storage.get_run_checkpoint(r) == {"domains_done": {"a.com": {"pages_ok": 3}}}
+    # A second write fully replaces, matching "caller passes its full current state".
+    storage.update_run_checkpoint(r, {"domains_done": {"a.com": {"pages_ok": 3},
+                                                       "b.com": {"pages_ok": 5}}})
+    cp = storage.get_run_checkpoint(r)
+    assert set(cp["domains_done"].keys()) == {"a.com", "b.com"}
+
+
+def test_run_checkpoint_returns_empty_dict_for_unknown_run(fresh_db):
+    assert storage.get_run_checkpoint(999999) == {}
+
+
 def test_cross_run_dedup_never_inflates(fresh_db):
     pid = storage.create_project("P", {})
     # Run 1 collects two items.
@@ -82,6 +136,16 @@ def test_purge_removes_project(fresh_db):
     storage.delete_project(pid)
     assert storage.get_project(pid) is None
     assert storage.list_items(pid) == []
+
+
+def test_purge_removes_project_with_source_health_rows(fresh_db):
+    """Regression: source_health has a REFERENCES projects(id) FK with no CASCADE --
+    deleting a project with recorded source_health rows previously raised
+    sqlite3.IntegrityError (confirmed live, not hypothetical)."""
+    pid = storage.create_project("P", {})
+    storage.record_source_attempt(pid, "flaky.com", "flaky.com", success=False)
+    storage.delete_project(pid)  # must not raise
+    assert storage.get_project(pid) is None
 
 
 # --------------------------------------------------------------------------- #

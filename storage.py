@@ -153,11 +153,18 @@ def list_projects() -> List[Dict[str, Any]]:
 
 
 def delete_project(project_id: int) -> None:
-    """Explicit, confirmed purge of an entire project and all its lineage."""
+    """Explicit, confirmed purge of an entire project and all its lineage.
+
+    source_health (added by migrations.py _m003, DESIGN_01 §7.4) has a REFERENCES
+    projects(id) foreign key with no ON DELETE CASCADE — omitting it here was a real
+    bug (confirmed live: deleting a project with any recorded source_health rows
+    raised sqlite3.IntegrityError), not merely a theoretical gap.
+    """
     with write_conn() as conn:
         conn.execute("DELETE FROM analysis WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM items WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM runs WHERE project_id=?", (project_id,))
+        conn.execute("DELETE FROM source_health WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM market_intel WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM schedules WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
@@ -166,12 +173,17 @@ def delete_project(project_id: int) -> None:
 # --------------------------------------------------------------------------- #
 # Runs (lineage)
 # --------------------------------------------------------------------------- #
-def start_run(project_id: int, channel: str, params: Dict[str, Any], triggered_by: Optional[str] = None) -> int:
+def start_run(project_id: int, channel: str, params: Dict[str, Any], triggered_by: Optional[str] = None,
+             job_kind: Optional[str] = None) -> int:
+    """``job_kind`` (DESIGN_01 §9): "backfill" for a one-time historical job or "daily"
+    for the standing incremental one — None (the default) preserves every existing
+    caller's behavior unchanged (the column allows NULL)."""
     with write_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO runs (project_id, channel, params_json, status, started_at, triggered_by) "
-            "VALUES (?,?,?,?,?,?)",
-            (project_id, channel, json.dumps(params, ensure_ascii=False), "running", utcnow(), triggered_by),
+            "INSERT INTO runs (project_id, channel, params_json, status, started_at, "
+            "triggered_by, job_kind) VALUES (?,?,?,?,?,?,?)",
+            (project_id, channel, json.dumps(params, ensure_ascii=False), "running", utcnow(),
+             triggered_by, job_kind),
         )
         return int(cur.lastrowid)
 
@@ -213,6 +225,33 @@ def list_runs(project_id: int, limit: int = 200) -> List[Dict[str, Any]]:
             "SELECT * FROM runs WHERE project_id=? ORDER BY id DESC LIMIT ?", (project_id, limit)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_run_checkpoint(run_id: int) -> Dict[str, Any]:
+    """DESIGN_01 §9: a resumed run reads this to find out which units of work are
+    already done. Returns {} for an unknown run or one with no checkpoint yet
+    (runs.checkpoint_json defaults to '{}' — see migrations.py _m003) rather than
+    raising, since "nothing checkpointed yet" is a normal, expected state."""
+    run = get_run(run_id)
+    if not run:
+        return {}
+    try:
+        return json.loads(run.get("checkpoint_json") or "{}")
+    except (TypeError, ValueError):
+        return {}
+
+
+def update_run_checkpoint(run_id: int, checkpoint: Dict[str, Any]) -> None:
+    """Overwrites the run's checkpoint with the caller's full current state. Callers
+    are expected to write this IMMEDIATELY after each unit of work completes (DESIGN_01
+    §9's "committed to checkpoint_json immediately, not held in worker memory"), not
+    batch several units' worth before writing — a crash between writes only ever loses
+    the one in-flight unit, never previously-completed ones."""
+    with write_conn() as conn:
+        conn.execute(
+            "UPDATE runs SET checkpoint_json=? WHERE id=?",
+            (json.dumps(checkpoint, ensure_ascii=False), run_id),
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -289,7 +328,14 @@ def _find_cluster_match(conn: sqlite3.Connection, project_id: int, title: str,
 def save_items(project_id: int, run_id: int, source: str, items: Iterable[Dict[str, Any]]) -> Dict[str, int]:
     """Persist collected items, de-duplicating within the project.
 
-    Each item dict may provide: title, text, link, published, extra (dict).
+    Each item dict may provide: title, text, link, published, extra (dict), and
+    (DESIGN_01 §10/§13 increment 6) optionally raw_html, category, source_type — the
+    raw-content-retention columns added by migrations.py's _m003 back in increment 1,
+    populated here for the first time. Every existing caller that doesn't pass these
+    three simply gets NULL for them, exactly as before this change (AUDIT_08/§14 item
+    9: retention is guaranteed going forward for the new pipeline, not retrofitted
+    onto the 10 existing channels).
+
     Returns {"returned": N, "new": N, "duplicate": N}. The run's counters are the
     caller's responsibility (call finish_run with these numbers).
     """
@@ -305,6 +351,9 @@ def save_items(project_id: int, run_id: int, source: str, items: Iterable[Dict[s
             link = it.get("link") or ""
             published = it.get("published")
             extra = it.get("extra") or {}
+            raw_html = it.get("raw_html")
+            category = it.get("category")
+            source_type = it.get("source_type")
             chash = it.get("content_hash") or compute_content_hash(source, link, title, text)
             exists = conn.execute(
                 "SELECT 1 FROM items WHERE project_id=? AND content_hash=?", (project_id, chash)
@@ -315,7 +364,8 @@ def save_items(project_id: int, run_id: int, source: str, items: Iterable[Dict[s
             try:
                 cur = conn.execute(
                     "INSERT INTO items (project_id, run_id, source, content_hash, title, text, link, "
-                    "published, extra_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "published, extra_json, created_at, raw_html, category, source_type) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         project_id,
                         run_id,
@@ -327,6 +377,9 @@ def save_items(project_id: int, run_id: int, source: str, items: Iterable[Dict[s
                         published,
                         json.dumps(extra, ensure_ascii=False),
                         now,
+                        raw_html,
+                        category,
+                        source_type,
                     ),
                 )
                 new_id = cur.lastrowid
