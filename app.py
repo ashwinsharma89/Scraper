@@ -695,10 +695,34 @@ def api_analytics(pid: int, name: str, user: str = Depends(require_user)):
         "brand_vs_competitor": lambda: {"data": analytics.brand_vs_competitor_sentiment(pid)},
         "verbatims": lambda: analytics.top_verbatims_per_theme(pid),
         "relevance_recovery": lambda: analytics.relevance_recovery_stats(pid),
+        "items_by_channel": lambda: {"data": analytics.items_by_channel(pid)},
+        "items_by_domain": lambda: analytics.items_by_domain(pid),
     }
     if name not in fns:
         raise HTTPException(status_code=404, detail=f"unknown aggregate: {name}")
     return fns[name]()
+
+
+@app.get("/api/projects/{pid}/source-health")
+def api_source_health(pid: int, paused_only: bool = False, user: str = Depends(require_user)):
+    """DESIGN_01 §7.4/§12's Access & Reliability panel — per-source consecutive-
+    failure/pause state for THIS project (unlike site_intelligence below, which is
+    global). Reused unchanged from storage.py; nothing new to compute here."""
+    _project_or_404(pid)
+    return storage.list_source_health(pid, paused_only=paused_only)
+
+
+@app.get("/api/projects/{pid}/site-intelligence")
+def api_project_site_intelligence(pid: int, user: str = Depends(require_user)):
+    """DESIGN_01 §4b/§12 — the learning mechanism's visible result: what the GLOBAL,
+    cross-project site_intelligence ledger has actually learned so far for THIS
+    project's own category (real track record across every study that has ever used
+    it, not just this one). Read-only; nothing is written from a dashboard view."""
+    project = _project_or_404(pid)
+    category = project["config"].get("product", {}).get("category", "")
+    if not category:
+        return {"category": "", "sites": []}
+    return {"category": category, "sites": storage.list_site_intelligence(category, limit=50)}
 
 
 # --------------------------------------------------------------------------- #

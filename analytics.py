@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import storage
 
@@ -184,6 +185,44 @@ def relevance_recovery_stats(project_id: int) -> Dict[str, Any]:
         "confirmed_unrelated": len(confirmed_unrelated),
         "pending_analysis": len(pending),
     }
+
+
+def items_by_channel(project_id: int) -> List[Dict[str, Any]]:
+    """Raw collected volume per channel, regardless of analysis status (DESIGN_01
+    §12's results dashboard — complements sentiment_by_channel, which only covers
+    already-analyzed rows). This is the first place a study's real channel mix
+    becomes visible: how much came from the 10 existing channels vs. the new
+    generic_site pipeline (§13 increments 3-6)."""
+    totals = storage.count_items_by_source(project_id)
+    analyzed = Counter(r["source"] for r in storage.items_with_analysis(project_id) if r.get("sentiment"))
+    out = []
+    for channel in sorted(totals):
+        n = totals[channel]
+        out.append({
+            "channel": channel, "n": n, "analyzed_n": analyzed.get(channel, 0),
+            "low_confidence": n < LOW_CONFIDENCE_THRESHOLD,
+        })
+    return out
+
+
+def items_by_domain(project_id: int, source: str = "generic_site", limit: int = 20) -> Dict[str, Any]:
+    """Per-domain volume for the generic-site pipeline specifically (DESIGN_01 §12) —
+    the concrete, per-study answer to "which of the discovered sites actually
+    contributed content," directly reflecting site_intelligence's per-site learning
+    (a domain with high volume here is exactly the kind of real track record that
+    feeds record_site_outcome, §4b) rather than a hypothetical channel-level number.
+    """
+    rows = storage.list_items(project_id, source=source, limit=5000)
+    counts: Counter = Counter()
+    for r in rows:
+        domain = urlparse(r.get("link") or "").netloc.lower()
+        if domain.startswith("www."):
+            domain = domain[4:]
+        counts[domain or "(unknown)"] += 1
+    total = sum(counts.values())
+    domains = [{"domain": d, "n": n} for d, n in counts.most_common(limit)]
+    return {"source": source, "n": total, "domains": domains,
+           "low_confidence": total < LOW_CONFIDENCE_THRESHOLD}
 
 
 def dashboard(project_id: int) -> Dict[str, Any]:

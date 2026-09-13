@@ -24,6 +24,7 @@ const HELP = {
   sources: "<b>Step 1.</b> Tell MarketLens <i>where</i> to look: paste RSS / e-commerce / forum URLs, edit the per-language keyword slots, then <b>Save config</b>. This does <b>not</b> collect anything — that happens in Collect.",
   collect: "<b>Step 2.</b> Run scrapers to gather data. Channels tagged <span class='ready-badge'>ready</span> work immediately; others need a key or URLs. Jobs run one at a time. Start with News, Reddit, and GDELT.",
   runlog: "The full audit trail of every run — including honest failures (blocked sites, rate limits). Nothing is ever fabricated.",
+  results: "Where the data actually came from and how reliable it's been: volume by channel and by site, sources currently paused after repeated failures, and what the cross-project site-intelligence ledger has learned so far for this category.",
   items: "Every collected item, one row each, with its analysis tags. Search and filter here — e.g. set <b>Brand focus = target brand</b> to hide off-topic noise, or <b>Sentiment = negative</b> to read complaints.",
   analysis: "<b>Step 3.</b> Tag every collected item with sentiment, an English summary, purchase drivers, and themes. <b>Requires ANTHROPIC_API_KEY.</b> Safe to click again — already-tagged items are skipped.",
   intel: "Human-entered market facts (size, share, GDP…). Every entry needs a full citation. Optional, but it enriches the report's Market Overview.",
@@ -287,8 +288,8 @@ function render() {
   const div = document.createElement("div"); div.className = "view";
   el("main").appendChild(div);
   ({ overview: viewOverview, sources: viewSources, collect: viewCollect, runlog: viewRunLog,
-     items: viewItems, analysis: viewAnalysis, intel: viewIntel, manual: viewManual,
-     schedules: viewSchedules, export: viewExport }[State.view] || viewOverview)(div);
+     results: viewResults, items: viewItems, analysis: viewAnalysis, intel: viewIntel,
+     manual: viewManual, schedules: viewSchedules, export: viewExport }[State.view] || viewOverview)(div);
 }
 
 // --------------------------------------------------------------------------- //
@@ -799,6 +800,64 @@ async function viewRunLog(root) {
       <td>${r.rows_duplicate}</td><td>${esc(r.triggered_by||"")}</td>
       <td class="muted">${esc((r.errors_json||"[]").slice(0,120))}</td></tr>`).join("") ||
       `<tr><td colspan="9" class="muted">No runs yet.</td></tr>`}</tbody></table></div>`;
+}
+
+// --------------------------------------------------------------------------- //
+// Results dashboard (DESIGN_01_category-discovery.md §12) — volume by channel/
+// site, the Access & Reliability panel (source_health), and the site-intelligence
+// learning ledger's real, cross-project track record for this study's category.
+// --------------------------------------------------------------------------- //
+async function viewResults(root) {
+  root.innerHTML = helpBox("results") + `
+    <div class="card"><h3>Volume by channel</h3><div id="res-channels" class="grid"><span class="muted">Loading…</span></div></div>
+    <div class="card"><h3>Top sites (generic-site discovery)</h3><div id="res-domains"></div></div>
+    <div class="card"><h3>Access &amp; reliability</h3>
+      <p class="muted">Sources auto-paused after repeated failures — never retried forever, never
+        silently dropped (DESIGN_01 §7.4).</p>
+      <div id="res-health"></div></div>
+    <div class="card"><h3>Site intelligence — what this category has learned so far</h3>
+      <p class="muted">The cross-project ledger for "<b id="res-category"></b>": every real site any
+        study has ever tried for this category, with its accumulated track record. This is the
+        literal output of the learning mechanism (DESIGN_01 §4b) — not just this study's own runs.</p>
+      <div id="res-ledger"></div></div>`;
+
+  const [byChannel, byDomain, health, ledger] = await Promise.all([
+    api(`/api/projects/${State.projectId}/analytics/items_by_channel`),
+    api(`/api/projects/${State.projectId}/analytics/items_by_domain`),
+    api(`/api/projects/${State.projectId}/source-health`),
+    api(`/api/projects/${State.projectId}/site-intelligence`),
+  ]);
+
+  el("res-channels").innerHTML = byChannel.data.length
+    ? byChannel.data.map(c => stat(c.channel, `${c.n} (${c.analyzed_n} analyzed)`)).join("")
+    : `<p class="muted">Nothing collected yet — run a channel from the Collect tab.</p>`;
+
+  el("res-domains").innerHTML = byDomain.domains.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Domain</th><th>Items collected</th></tr></thead>
+      <tbody>${byDomain.domains.map(d => `<tr><td>${esc(d.domain)}</td><td>${d.n}</td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="muted">No generic-site items collected yet.</p>`;
+
+  el("res-health").innerHTML = health.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Domain</th><th>Consecutive failures</th>
+        <th>Paused</th><th>Last status</th><th>Last checked</th></tr></thead>
+      <tbody>${health.map(h => `<tr><td>${esc(h.domain)}</td><td>${h.consecutive_failures}</td>
+        <td>${h.paused ? '<span class="badge tier3">paused</span>' : '<span class="badge tier1">active</span>'}</td>
+        <td class="muted">${esc(h.last_status || "")}</td>
+        <td class="muted">${esc((h.last_checked_at || "").slice(0, 19))}</td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="muted">No source-health history yet for this project.</p>`;
+
+  el("res-category").textContent = ledger.category || "(no category set)";
+  el("res-ledger").innerHTML = ledger.sites.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Domain</th><th>Times used</th>
+        <th>Kept / dropped</th><th>Confidence</th><th>Blocked</th><th>Status</th></tr></thead>
+      <tbody>${ledger.sites.map(s => `<tr><td>${esc(s.domain)}</td><td>${s.times_used}</td>
+        <td>${s.items_kept} / ${s.items_dropped}</td>
+        <td>${s.confidence == null ? "—" : Math.round(s.confidence * 100) + "%"}</td>
+        <td>${s.times_blocked}</td>
+        <td>${s.validated_by_human ? '<span class="badge tier1">human-validated</span>'
+          : (s.times_used >= 3 && s.confidence >= 0.5) ? '<span class="badge tier1">auto-trusted</span>'
+          : '<span class="needs-badge">needs validation</span>'}</td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="muted">No sites in the ledger for this category yet — run the AI-guided study wizard's site discovery step, or collect via the generic-site pipeline first.</p>`;
 }
 
 // --------------------------------------------------------------------------- //

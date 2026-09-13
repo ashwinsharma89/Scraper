@@ -513,3 +513,76 @@ def test_launch_study_applies_confirmed_term_expansion(client, monkeypatch):
     pid = r.json()["project_id"]
     cfg = storage.get_project(pid)["config"]
     assert "Fizzly Max" in cfg["competitors"]
+
+
+def test_analytics_items_by_channel_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    r = client.post("/api/projects/wizard", json=intake)
+    pid = r.json()["id"]
+    run_id = storage.start_run(pid, "news", {})
+    storage.save_items(pid, run_id, "news", [{"title": "A", "text": "b", "link": "http://x/1"}])
+    r = client.get(f"/api/projects/{pid}/analytics/items_by_channel")
+    assert r.status_code == 200
+    assert r.json()["data"][0]["channel"] == "news"
+    assert r.json()["data"][0]["n"] == 1
+
+
+def test_analytics_items_by_domain_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    r = client.post("/api/projects/wizard", json=intake)
+    pid = r.json()["id"]
+    run_id = storage.start_run(pid, "generic_site", {})
+    storage.save_items(pid, run_id, "generic_site",
+                       [{"title": "A", "text": "b", "link": "http://blog.com/1"}])
+    r = client.get(f"/api/projects/{pid}/analytics/items_by_domain")
+    assert r.status_code == 200
+    assert r.json()["domains"] == [{"domain": "blog.com", "n": 1}]
+
+
+def test_analytics_unknown_aggregate_404(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    pid = storage.create_project("P", {"product": {}, "market": {}, "source_plan": {}})
+    r = client.get(f"/api/projects/{pid}/analytics/nonsense")
+    assert r.status_code == 404
+
+
+def test_source_health_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    pid = storage.create_project("P", {"product": {}, "market": {}, "source_plan": {}})
+    storage.record_source_attempt(pid, "flaky.com", "flaky.com", success=False)
+    r = client.get(f"/api/projects/{pid}/source-health")
+    assert r.status_code == 200
+    assert r.json()[0]["domain"] == "flaky.com"
+
+
+def test_source_health_endpoint_paused_only_filter(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    pid = storage.create_project("P", {"product": {}, "market": {}, "source_plan": {}})
+    storage.record_source_attempt(pid, "ok.com", "ok.com", success=True)
+    for _ in range(3):
+        storage.record_source_attempt(pid, "dead.com", "dead.com", success=False)
+    r = client.get(f"/api/projects/{pid}/source-health?paused_only=true")
+    assert r.status_code == 200
+    assert [row["domain"] for row in r.json()] == ["dead.com"]
+
+
+def test_project_site_intelligence_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    pid = storage.create_project("P", {"product": {"category": "coffee"}, "market": {},
+                                       "source_plan": {}})
+    storage.record_site_outcome("curlytales.com", "coffee", kept=9, dropped=1)
+    r = client.get(f"/api/projects/{pid}/site-intelligence")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["category"] == "coffee"
+    assert body["sites"][0]["domain"] == "curlytales.com"
+
+
+def test_project_site_intelligence_endpoint_no_category(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    pid = storage.create_project("P", {"product": {"category": ""}, "market": {}, "source_plan": {}})
+    r = client.get(f"/api/projects/{pid}/site-intelligence")
+    assert r.status_code == 200
+    assert r.json() == {"category": "", "sites": []}
