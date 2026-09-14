@@ -44,6 +44,10 @@ export default function SourcePlan() {
   const [discoveringOutlets, setDiscoveringOutlets] = useState(false)
   const [checkedOutlets, setCheckedOutlets] = useState(new Set())
 
+  const [geoTerms, setGeoTerms] = useState(null)
+  const [discoveringGeoTerms, setDiscoveringGeoTerms] = useState(false)
+  const [checkedGeoTerms, setCheckedGeoTerms] = useState(new Set())
+
   async function saveSources() {
     const newCfg = structuredClone(cfg)
     for (const [key, text] of Object.entries(lists)) {
@@ -135,6 +139,32 @@ export default function SourcePlan() {
     try {
       const r = await api(`/api/projects/${projectId}/apply-outlets`, { method: 'POST', body: { names } })
       toast(`Added ${names.length} outlet(s) — ${r.market_terms_count} market term(s) total now.`)
+      window.location.reload()
+    } catch (e) {
+      toast(e.message, true)
+    }
+  }
+
+  async function doDiscoverGeoTerms() {
+    setDiscoveringGeoTerms(true)
+    setGeoTerms(null)
+    try {
+      const r = await api(`/api/projects/${projectId}/suggest-market-terms`, { method: 'POST' })
+      setGeoTerms(r)
+      setCheckedGeoTerms(new Set((r.terms || []).map((t) => t.name)))
+    } catch (e) {
+      toast(e.message, true)
+    } finally {
+      setDiscoveringGeoTerms(false)
+    }
+  }
+
+  async function applyGeoTerms() {
+    const names = [...checkedGeoTerms]
+    try {
+      const r = await api(`/api/projects/${projectId}/apply-outlets`,
+        { method: 'POST', body: { names, kind: 'city/region market term' } })
+      toast(`Added ${names.length} place(s) — ${r.market_terms_count} market term(s) total now.`)
       window.location.reload()
     } catch (e) {
       toast(e.message, true)
@@ -256,6 +286,22 @@ export default function SourcePlan() {
           <OutletResults r={outlets} checked={checkedOutlets} setChecked={setCheckedOutlets} onApply={applyOutlets} />
         )}
       </Card>
+
+      <Card><h3>✨ Suggest city/region market terms (AI)</h3>
+        <p className="muted">Same market filter, one geographic level down: an article naming
+          only a city or region — never the country itself — is genuinely in-market but
+          currently invisible to the filter unless that place is already a market term.
+          This finds REAL cities/regions in {mkt.country || 'this market'} that are
+          specifically significant for <b>{cfg.product?.category || 'this category'}</b> (major
+          consumption/manufacturing hubs, not just the biggest cities generically). Each one
+          you add becomes a market term, market-wide.</p>
+        <button onClick={doDiscoverGeoTerms} disabled={discoveringGeoTerms}>
+          {discoveringGeoTerms ? 'Asking Claude…' : '✨ Suggest places for this category'}
+        </button>
+        {geoTerms && (
+          <GeoTermResults r={geoTerms} checked={checkedGeoTerms} setChecked={setCheckedGeoTerms} onApply={applyGeoTerms} />
+        )}
+      </Card>
     </>
   )
 }
@@ -359,6 +405,29 @@ function OutletResults({ r, checked, setChecked, onApply }) {
             <span className="badge neu">{o.category || '—'}</span>{' '}
             <span className="badge neu">{o.language || '—'}</span>
             <br /><span className="muted">{o.domain || ''}{o.why ? ` — ${o.why}` : ''}</span></span>
+        </label>
+      )) : <p className="muted">Nothing came back — try again in a moment.</p>}
+    </div>
+  )
+}
+
+function GeoTermResults({ r, checked, setChecked, onApply }) {
+  const toggle = (name) => setChecked((prev) => {
+    const next = new Set(prev)
+    next.has(name) ? next.delete(name) : next.add(name)
+    return next
+  })
+  const s = r._summary || {}
+  return (
+    <div className="card" style={{ borderColor: 'var(--primary)' }}>
+      <div className="card-head"><h4>✨ {s.total || 0} place(s) found</h4><button onClick={onApply}>Add checked to market terms</button></div>
+      <p className="muted">AI-proposed — nothing is added until you click above. Places already
+        in your market terms are never re-suggested.</p>
+      {(r.terms || []).length ? r.terms.map((t) => (
+        <label key={t.name} style={{ display: 'flex', gap: '.5rem', alignItems: 'flex-start', fontWeight: 400, margin: '.25rem 0' }}>
+          <input type="checkbox" checked={checked.has(t.name)} style={{ width: 'auto', marginTop: '.2rem' }}
+            onChange={() => toggle(t.name)} />
+          <span><b>{t.name}</b><br /><span className="muted">{t.why || ''}</span></span>
         </label>
       )) : <p className="muted">Nothing came back — try again in a moment.</p>}
     </div>

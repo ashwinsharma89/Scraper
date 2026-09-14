@@ -423,6 +423,37 @@ def test_apply_outlets_adds_to_market_terms(client, monkeypatch):
     assert "NDTV" in r3.json()["config"]["market"]["market_terms"]
 
 
+def test_suggest_market_terms_calls_geo_discovery_module(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+
+    import geo_term_discovery
+
+    def fake_suggest(cfg, **kw):
+        return {"terms": [{"name": "Lagos", "why": "major hub"}], "_summary": {"total": 1}}
+
+    monkeypatch.setattr(geo_term_discovery, "suggest_market_terms", fake_suggest)
+    r2 = client.post(f"/api/projects/{pid}/suggest-market-terms")
+    assert r2.status_code == 200
+    assert r2.json()["terms"][0]["name"] == "Lagos"
+
+
+def test_apply_outlets_uses_kind_for_an_accurate_audit_message(client, monkeypatch):
+    """The same apply endpoint backs both outlet suggestions and city/region market-term
+    suggestions -- `kind` only changes the audit-log wording ("local outlet(s)" vs
+    "city/region market term(s)"), confirming the shared path is honest either way."""
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+
+    r2 = client.post(f"/api/projects/{pid}/apply-outlets",
+                     json={"names": ["Lagos"], "kind": "city/region market term"})
+    assert r2.status_code == 200
+    audit = storage.list_audit(pid)
+    assert any("city/region market term(s)" in a["detail"] for a in audit)
+
+
 def test_health_reports_key_presence_not_values(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     import settings as settings_mod

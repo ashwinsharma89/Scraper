@@ -594,18 +594,43 @@ def api_suggest_outlets(pid: int, user: str = Depends(require_user)):
 
 @app.post("/api/projects/{pid}/apply-outlets")
 def api_apply_outlets(pid: int, body: Dict[str, Any], user: str = Depends(require_user)):
-    """Apply a user-CONFIRMED subset of /suggest-outlets' output: each selected outlet name
-    is added to market.market_terms so the news market gate recognizes it as in-market on
-    its own. No feed regeneration needed — this only affects relevance filtering."""
+    """Apply a user-CONFIRMED subset of /suggest-outlets' OR /suggest-market-terms'
+    output: each selected name is added to market.market_terms so the news market gate
+    recognizes it as in-market on its own. No feed regeneration needed — this only
+    affects relevance filtering. Shared by both suggestion features (outlets and city/
+    region terms both just append strings to the same field, with the same dedup
+    semantics) rather than duplicating an apply endpoint per suggestion source; `kind`
+    only changes the audit-log wording, never behavior."""
     p = _project_or_404(pid)
     body = body or {}
     names = body.get("names") or []
+    kind = body.get("kind") or "local outlet"
     import outlet_discovery
     new_cfg = outlet_discovery.apply_outlets(p["config"], names)
     storage.update_project_config(pid, new_cfg, None)
-    storage.audit("outlets.apply", f"Added {len(names)} local outlet(s) to market terms",
+    storage.audit("outlets.apply", f"Added {len(names)} {kind}(s) to market terms",
                   acting_user=user, project_id=pid)
     return {"ok": True, "market_terms_count": len(new_cfg["market"]["market_terms"])}
+
+
+@app.post("/api/projects/{pid}/suggest-market-terms")
+def api_suggest_market_terms(pid: int, user: str = Depends(require_user)):
+    """AI-suggest real, category-relevant cities/regions within this project's market
+    (HANDOFF §7: "Auto-suggest city/region market terms to further reduce market-filter
+    over-drop") — the same demonym-style gap one geographic level down: an article
+    naming only "Lagos", never "Nigeria," is in-market but undetected without this.
+
+    Returns candidates only — nothing is written until confirmed via /apply-outlets
+    (same target field as outlet suggestions, so it's reused rather than duplicated)."""
+    p = _project_or_404(pid)
+    import geo_term_discovery
+    try:
+        result = geo_term_discovery.suggest_market_terms(p["config"])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    storage.audit("market_terms.suggest", "AI city/region market-term discovery run",
+                  acting_user=user, project_id=pid)
+    return result
 
 
 @app.post("/api/projects/{pid}/feed-health")

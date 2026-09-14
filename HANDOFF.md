@@ -278,6 +278,24 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   the Summary tab documents which mode was used, in both directions. Wired through
   `POST /api/projects/{id}/export`'s `exclude_unrelated` body field and a checkbox in
   Export.jsx.
+- **Auto-suggest city/region market terms** (HANDOFF §7, new `geo_term_discovery.py`) —
+  the same demonym-style market-filter gap one geographic level down: an article naming
+  only a city/region, never the country, is genuinely in-market but undetected unless
+  that place is already a market term. Same suggestion+validation posture as
+  `outlet_discovery.py`: Claude proposes REAL, category-relevant cities/regions in the
+  study's market (major consumption/manufacturing hubs for THAT category, not just the
+  biggest cities generically), candidates already in `market_terms` are dropped up
+  front, and nothing is written until confirmed. Reuses `outlet_discovery.apply_outlets()`
+  for the actual write (same target field, same dedup semantics) rather than duplicating
+  an apply path — `POST /api/projects/{id}/apply-outlets` now takes an optional `kind`
+  field so the audit log reads accurately either way ("local outlet(s)" vs "city/region
+  market term(s)"). New `POST /api/projects/{id}/suggest-market-terms` endpoint; a
+  "✨ Suggest city/region market terms (AI)" card in Source plan, right after outlet
+  discovery. Live-verified against the real demo project (Singapore/carbonated soft
+  drinks): real, specific, category-relevant suggestions came back (Orchard Road, Jurong,
+  Changi, Marina Bay, ... — each with a genuine category-specific "why," not generic
+  biggest-cities filler), applied 2 of them, confirmed persisted via a direct API call,
+  and confirmed the audit log correctly read "Added 2 city/region market term(s)."
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
@@ -359,18 +377,15 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 ## 7. PENDING / SUGGESTED NEXT WORK (pick up here)
 
 Offered to the user but not yet built (in rough priority order):
-1. **Auto-suggest city/region market terms** to further reduce market-filter over-drop
-   (demonyms are now automatic — §5.2 — but city/region-level terms still require the user
-   to add them manually in Source plan, or come via ✨ Suggest sources).
-2. **PDF report export**; **per-tab description headers** in the Excel (self-documenting).
-3. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set — **no
+1. **PDF report export**; **per-tab description headers** in the Excel (self-documenting).
+2. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set — **no
    keys are configured in this environment's `.env`** (checked live), so this cannot be
    done from here; needs the user to supply real keys in their own `.env` (never pasted
    into chat — see §0's security note) and run it themselves, or hand it to a session
    that has them.
-4. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
+3. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
    (currently API + Excel Confidence tab only, no dedicated frontend chart yet).
-5. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
+4. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
    this sandbox again and confirmed the 429 is IP-level, not app-level: plain `curl` (no
    pytrends, no cookies) against `trends.google.com/trends/api/explore` returns 429 directly,
    while `trends.google.com/trends/` (homepage) returns 200 — so it's specifically this
