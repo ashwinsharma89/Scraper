@@ -181,6 +181,20 @@ def apply_expansion(
     cfg["competitors"] (deduped, order-preserving) so the existing brand_focus analysis
     tagging picks them up.
 
+    Real gap found live (user report: a bare category term like "coffee" false-
+    positives on unrelated content whose headline happens to contain it as a
+    substring/proper-noun, e.g. a Hindi political debate show literally named
+    "Coffee Par Kurukshetra") — confirmed brands/variants used to feed ONLY the News
+    query structures above, never scrapers/base.py's relevance_terms(cfg), which is
+    what GDELT's title re-validation and News's own headline-match/OR-filter
+    actually check against. A user expanding "coffee" into espresso/cappuccino/cold
+    brew/Nescafé/Starbucks previously got MORE, narrower feeds fetched but ZERO
+    improvement to relevance validation itself, since the broad "coffee" term
+    already in relevance_terms still matched everything regardless of what else was
+    added. Every confirmed variant/brand/translated term is now ALSO merged into
+    relevance_terms (deduped case-insensitively, existing terms and their order
+    preserved) so genuinely specific matches become possible going forward.
+
     Returns a NEW config dict; does not mutate the input.
     """
     new_cfg = json.loads(json.dumps(cfg, ensure_ascii=False))  # deep copy, unicode-safe
@@ -189,17 +203,20 @@ def apply_expansion(
     by_language = new_cfg.setdefault("keywords", {}).setdefault("by_language", {})
     primary_slots = by_language.setdefault(primary, {})
     base_slug = _slug(term)
+    confirmed_terms: List[str] = []
 
     # Every list below is enumerated so a non-Latin-script entry (which always slugs to
     # the same fallback) still gets a UNIQUE key via its index, instead of silently
     # colliding with and overwriting a previous entry's structure.
     for i, v in enumerate(variants or []):
         primary_slots[f"{base_slug}_variant_{_slug(v, fallback=str(i))}"] = [v]
+        confirmed_terms.append(v)
 
     competitors = new_cfg.setdefault("competitors", [])
     existing_lower = {c.lower() for c in competitors}
     for i, b in enumerate(brands or []):
         primary_slots[f"{base_slug}_brand_{_slug(b, fallback=str(i))}"] = [b]
+        confirmed_terms.append(b)
         if b.lower() not in existing_lower:
             competitors.append(b)
             existing_lower.add(b.lower())
@@ -209,7 +226,16 @@ def apply_expansion(
         t_term = (entry or {}).get("term", "")
         if t_term:
             lang_slots[f"{base_slug}_translated"] = [t_term]
+            confirmed_terms.append(t_term)
         for i, v in enumerate((entry or {}).get("variants", []) or []):
             lang_slots[f"{base_slug}_variant_{_slug(v, fallback=str(i))}"] = [v]
+            confirmed_terms.append(v)
+
+    relevance_terms = new_cfg.setdefault("relevance_terms", [])
+    seen_lower = {t.lower() for t in relevance_terms if t}
+    for t in confirmed_terms:
+        if t and t.lower() not in seen_lower:
+            relevance_terms.append(t)
+            seen_lower.add(t.lower())
 
     return new_cfg

@@ -152,6 +152,40 @@ def test_apply_expansion_creates_one_structure_per_selection():
     assert "Starbucks" in new_cfg["competitors"]
 
 
+def test_apply_expansion_merges_confirmed_terms_into_relevance_terms():
+    """Real gap found live (user report): a bare category term like "coffee" alone in
+    relevance_terms false-positives on unrelated content whose headline happens to
+    contain it as a substring/proper noun (e.g. a real Hindi political debate show
+    literally titled "Coffee Par Kurukshetra"). Confirmed variants/brands/
+    translations previously fed ONLY the News query structures, never
+    relevance_terms itself -- which is what GDELT's title re-validation and News's
+    own headline-match/OR-filter actually check. Without this, expanding a term
+    fetched MORE feeds but did nothing to make matching itself more precise."""
+    cfg = _cfg()
+    before = set(cfg.get("relevance_terms", []))
+
+    new_cfg = term_expansion.apply_expansion(
+        cfg, "coffee",
+        variants=["instant coffee", "cold coffee"],
+        brands=["Starbucks"],
+        translations={"hi": {"term": "कॉफी", "variants": ["इंस्टेंट कॉफी"]}},
+    )
+    terms = new_cfg["relevance_terms"]
+    # Every existing term survives untouched...
+    assert before <= set(terms)
+    # ...and every confirmed selection is now also a relevance term.
+    for t in ["instant coffee", "cold coffee", "Starbucks", "कॉफी", "इंस्टेंट कॉफी"]:
+        assert t in terms
+
+
+def test_apply_expansion_relevance_terms_merge_dedupes_case_insensitively():
+    cfg = _cfg()
+    cfg["relevance_terms"] = ["Starbucks"]
+    new_cfg = term_expansion.apply_expansion(cfg, "coffee", brands=["starbucks"])
+    assert new_cfg["relevance_terms"].count("Starbucks") == 1
+    assert "starbucks" not in new_cfg["relevance_terms"]  # the existing casing wins
+
+
 def test_apply_expansion_native_script_variants_dont_collide():
     """The bug this guards against: multiple non-Latin-script variants in the SAME
     language must each get a distinct structure — before the index-fallback fix, both of
@@ -201,3 +235,32 @@ def test_apply_expansion_then_regenerate_feeds_produces_one_feed_per_selection()
     # 1 translated term each for hi and te = 7 new -> 8 total.
     assert before == 1
     assert after == 8
+
+
+def test_apply_expansion_relevance_terms_merge_improves_gdelt_title_matching():
+    """Concrete proof of the real, practical value: a real GDELT-style headline that
+    mentions a confirmed brand but never says the bare category word "coffee" at all
+    was previously invisible to GDELT's own title re-validation (which checks
+    relevance_terms) -- confirming a brand via Expand-a-term now makes it catch this
+    genuine, on-topic story that keyword-only matching on "coffee" alone would miss."""
+    from scrapers import gdelt
+
+    cfg = _cfg()
+    cfg["source_plan"]["gdelt"] = {"sourcecountry": "IN"}
+    payload = ('{"articles":[{"title":"Nescafe launches new instant range",'
+               '"url":"http://a","seendate":"20260115T120000Z","domain":"news.in"}]}')
+
+    class R:
+        status_code = 200
+        text = payload
+
+    before_terms = list(cfg.get("relevance_terms", []))
+    res_before = gdelt.collect(cfg, {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+                               fetch_fn=lambda u: R())
+    assert res_before.items == []  # "Nescafe" alone doesn't match bare "coffee"
+
+    new_cfg = term_expansion.apply_expansion(cfg, "coffee", brands=["Nescafe"])
+    assert "Nescafe" in new_cfg["relevance_terms"] and "Nescafe" not in before_terms
+    res_after = gdelt.collect(new_cfg, {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+                              fetch_fn=lambda u: R())
+    assert len(res_after.items) == 1

@@ -321,6 +321,43 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   mentioned coffee — matches the user's reported symptom exactly); r/coffee with the
   same term correctly kept 43 of 66 genuinely coffee-titled posts and dropped 23
   off-topic ones (proving the filter isn't over-aggressive either).
+- **Real gap found + fixed (user report, with a concrete example): "Expand a term"
+  never actually improved News/GDELT relevance matching, only feed volume.** User
+  found a real GDELT/News false positive — a Hindi political debate show literally
+  titled "Coffee Par Kurukshetra" ("Coffee at Kurukshetra") — kept purely because
+  the bare category word "coffee" appears in it, unrelated to the beverage. Root
+  cause investigated (`term_expansion.apply_expansion()`): confirmed variant/brand/
+  translation terms were written ONLY into `keywords.by_language` (which
+  `config.regenerate_news_feeds()` turns into MORE, narrower News search queries) —
+  never into `cfg["relevance_terms"]`, which is what `scrapers/base.py`'s
+  `relevance_terms(cfg)` returns and what GDELT's title re-validation
+  (`relevance.contains_any_term`) and News's own headline-match/OR-filter actually
+  check against. So expanding "coffee" into espresso/cappuccino/cold brew/Nescafé/
+  Starbucks previously fetched more feeds but did nothing to make the underlying
+  relevance decision more precise — the broad "coffee" term already in
+  `relevance_terms` kept matching everything regardless of what else was added.
+  Fixed: every confirmed variant/brand/translated term is now ALSO merged into
+  `relevance_terms` (deduped case-insensitively, existing terms/order preserved).
+  **Honest limit, not fixed and not fixable by keyword matching alone**: this does
+  NOT solve the "Coffee Par Kurukshetra" case itself — the bare "coffee" term stays
+  in `relevance_terms` (removing it would hurt recall for the whole category) and
+  OR-logic means one broad term matching is enough to keep an item regardless of
+  what else is in the list. That specific class of false positive (a term used as a
+  proper noun/show-title/idiom, not literally about the product) is exactly what
+  Claude's `brand_focus` tagging during Analyze is FOR — keyword matching is
+  deliberately a recall-oriented first pass (cast a wide net, never silently drop a
+  paraphrased real mention), with precision meant to come from Analyze, not
+  collection. GDELT is the weakest channel for this specifically because it's
+  metadata-only (§6) — Claude only ever sees the same title keyword matching saw,
+  though a real LLM reading full context ("...GDP ग्रोथ, वोट चोरी टू SIR तक, राहुल
+  के झूठ...") should still correctly recognize Indian political content where
+  substring matching structurally cannot. 3 new tests, including one proving the
+  concrete practical value: a real headline mentioning a confirmed brand
+  ("Nescafe launches new instant range") with no literal "coffee" in it was
+  invisible to GDELT before this fix and correctly caught after. Full suite: 388
+  passed. Live-verified against the real demo project via a direct apply-terms API
+  call: confirmed `relevance_terms` picked up the new variant/brand strings
+  immediately, then reset via `seed_demo.py`.
 - **Suggested-RSS-feeds baked into the wizard** (HANDOFF §7 item 1) — the same
   ✨ Suggest sources → validate → confirm flow (extracted into
   `frontend/src/components/SuggestSourcesPanel.jsx`, shared with Source plan) now runs
