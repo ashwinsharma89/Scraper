@@ -45,6 +45,18 @@ def test_route_source_type_flags_tier3_platforms_as_unsupported_not_generic_site
     assert stm.route_source_type("TikTok trends")["strategy"] == "unsupported"
 
 
+def test_route_source_type_a_real_channel_mention_wins_over_a_tier3_one_in_the_same_name():
+    """Real gap, user feedback: "don't need whatsapp groups but need forums." A
+    compound suggestion naming BOTH a real channel and a Tier-3 platform must keep
+    the real one, not lose it to an all-or-nothing Tier-3 veto."""
+    r = stm.route_source_type("Niche coffee enthusiast forums & WhatsApp groups")
+    assert r == {"strategy": "existing_channel", "channel": "forums"}
+
+
+def test_route_source_type_pure_tier3_with_no_channel_mention_still_unsupported():
+    assert stm.route_source_type("WhatsApp groups only")["strategy"] == "unsupported"
+
+
 def test_suggest_source_types_routes_every_candidate():
     r = stm.suggest_source_types("coffee", call_fn=lambda p, m: LLM_JSON)
     by_name = {s["name"]: s for s in r["source_types"]}

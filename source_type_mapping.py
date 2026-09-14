@@ -55,13 +55,23 @@ _TIER3_KEYWORDS: List[str] = [
 
 def route_source_type(name: str) -> Dict[str, Optional[str]]:
     """Layer 2. Returns {"strategy": "existing_channel"|"generic_site_discovery"|
-    "unsupported", "channel": <key>|None}."""
+    "unsupported", "channel": <key>|None}.
+
+    Real gap found and fixed (user feedback: "don't need whatsapp groups but need
+    forums"): a compound Layer-1 suggestion naming BOTH a real, buildable channel and
+    a Tier-3 platform in the same string — e.g. "Niche coffee forums & WhatsApp
+    groups" — used to check Tier-3 first and lose the whole suggestion, including the
+    genuinely real forums coverage. Existing-channel keywords are checked FIRST now:
+    a real, working capability in the name wins over an unsupported one mentioned
+    alongside it, rather than an all-or-nothing veto. A name naming ONLY Tier-3
+    platforms (no channel keyword at all) is still correctly flagged unsupported.
+    """
     low = (name or "").strip().lower()
-    if any(kw in low for kw in _TIER3_KEYWORDS):
-        return {"strategy": "unsupported", "channel": None}
     for channel, keywords in _CHANNEL_KEYWORDS.items():
         if any(kw in low for kw in keywords):
             return {"strategy": "existing_channel", "channel": channel}
+    if any(kw in low for kw in _TIER3_KEYWORDS):
+        return {"strategy": "unsupported", "channel": None}
     return {"strategy": "generic_site_discovery", "channel": None}
 
 
