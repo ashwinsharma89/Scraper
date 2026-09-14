@@ -255,6 +255,20 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   and the topbar chip (`{channel} {pct}%`). Live-verified against a real full-year
   Extensive news job on the demo project: watched 1/52 → 52/52 climb via direct polling
   and in the browser, confirmed a real 86-item completion summary.
+- **Collect tab: "Results by channel" breakdown + one-click Excel download**
+  (`frontend/src/views/Collect.jsx`) — surfaces `analytics.items_by_channel()` (already
+  existed, was never shown anywhere in the UI) as a live-refreshing table (refetches
+  whenever the jobs list changes) right on the Collect page, with a nested "↳ news, by
+  engine" row reusing `news_engine_split()` (Google News/Bing News/direct RSS counts)
+  so the Bing-vs-Google value is visible right where collection happens, not only in
+  Analysis. A "Download Excel (raw data)" button next to it calls the SAME
+  `export.build_workbook()` the Export tab uses (works before Analyze — raw item tabs +
+  Run Log, no sentiment columns yet) and opens the download in one click, so reviewing
+  what just got collected doesn't require a trip to the Export tab. No backend changes
+  — both analytics functions and the export endpoint already existed. Live-verified: a
+  real single-channel news collect (110 items, 100 Google/10 Bing) showed correctly in
+  the breakdown table, and the download button produced a real, valid 112-row
+  (header + 110 items) "All Items" tab with the correct self-documenting description row.
 - **Suggested-RSS-feeds baked into the wizard** (HANDOFF §7 item 1) — the same
   ✨ Suggest sources → validate → confirm flow (extracted into
   `frontend/src/components/SuggestSourcesPanel.jsx`, shared with Source plan) now runs

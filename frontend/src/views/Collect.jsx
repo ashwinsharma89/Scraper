@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { AlertCircle, CheckCircle2, Clock, FlaskConical, Loader2, ListChecks } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { AlertCircle, CheckCircle2, Clock, Download, FlaskConical, Loader2, ListChecks, PieChart } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState, CHREQ } from '../state/AppState.jsx'
 import { useJobs } from '../state/JobsState.jsx'
@@ -47,6 +47,17 @@ export default function Collect() {
   const [extChannels, setExtChannels] = useState(new Set(EXT_CHANNELS.filter((c) => c.defaultOn).map((c) => c.value)))
   const [marketOnly, setMarketOnly] = useState(true)
   const [extStatus, setExtStatus] = useState('')
+  const [byChannel, setByChannel] = useState(null)
+  const [engineSplit, setEngineSplit] = useState(null)
+  const [buildingExcel, setBuildingExcel] = useState(false)
+
+  // Refetch whenever the jobs list changes -- exactly when new items may have
+  // landed, so the breakdown stays live without a manual reload.
+  useEffect(() => {
+    if (!projectId) return
+    api(`/api/projects/${projectId}/analytics/items_by_channel`).then((r) => setByChannel(r.data)).catch(() => setByChannel(null))
+    api(`/api/projects/${projectId}/analytics/news_engine_split`).then(setEngineSplit).catch(() => setEngineSplit(null))
+  }, [projectId, jobs])
 
   if (!project || !channels) return null
   const mkt = project.config.market || {}
@@ -84,6 +95,23 @@ export default function Collect() {
       startWatching()
     } catch (e) {
       toast(e.message, true)
+    }
+  }
+
+  // No need to wait for Analyze: build_workbook() works on raw collected items alone
+  // (no sentiment/summary columns yet, but everything else — All Items, per-channel
+  // tabs, Run Log — is there). One click here builds AND downloads, so reviewing
+  // what just got collected doesn't require a trip to the Export tab.
+  async function downloadExcelNow() {
+    setBuildingExcel(true)
+    try {
+      const r = await api(`/api/projects/${projectId}/export`, { method: 'POST', body: {} })
+      window.open(`/api/projects/${projectId}/export/download?path=${encodeURIComponent(r.path)}`, '_blank')
+      toast(`Built ${r.filename}`)
+    } catch (e) {
+      toast(e.message, true)
+    } finally {
+      setBuildingExcel(false)
     }
   }
 
@@ -143,6 +171,44 @@ export default function Collect() {
             </div>
           )
         })}
+      </Card>
+
+      <Card title={<><PieChart size={17} strokeWidth={2.1} className="title-icon" /> Results by channel</>}
+        headExtra={<button className="ghost" onClick={downloadExcelNow} disabled={buildingExcel || !byChannel?.length}>
+          <Download size={14} /> {buildingExcel ? 'Building…' : 'Download Excel (raw data)'}
+        </button>}>
+        {!byChannel?.length ? (
+          <EmptyState icon={PieChart} title="Nothing collected yet" hint="Run a channel above — results will break down here by channel as they come in." />
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Channel</th><th>Items</th><th>Analyzed</th><th></th></tr></thead>
+              <tbody>
+                {byChannel.map((c) => (
+                  <tr key={c.channel}>
+                    <td>{c.channel}</td>
+                    <td>{c.n}</td>
+                    <td>{c.analyzed_n}</td>
+                    <td>{c.low_confidence && <span className="flag">emerging (n&lt;100)</span>}</td>
+                  </tr>
+                ))}
+                {engineSplit?.total > 0 && (
+                  <tr>
+                    <td className="muted">↳ news, by engine</td>
+                    <td colSpan={3} className="muted">
+                      <span className="badge neu">Google News: {engineSplit.google_news}</span>{' '}
+                      <span className="badge pos">Bing News: {engineSplit.bing_news}</span>{' '}
+                      {engineSplit.rss > 0 && <span className="badge neu">Direct RSS: {engineSplit.rss}</span>}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="note">Excel download works right away — raw item tabs (All Items +
+          per-channel) and Run Log are there with no analysis needed; sentiment/summary/driver
+          columns fill in once you run Analyze.</div>
       </Card>
 
       <Card title="Recent jobs">
