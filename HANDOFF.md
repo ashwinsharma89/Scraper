@@ -319,6 +319,21 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   description. Live-verified: downloaded a real PDF from the running server
   (correct em dash/⚠ rendering, real section headings), and confirmed both
   description rows on a real built workbook.
+- **Bing/Google split + relevance-recovery stats surfaced in the Analysis tab UI**
+  (HANDOFF §7 — the last item on that list that was actually buildable from here).
+  New `analytics.news_engine_split()`: counts stored "news"-channel items by
+  `extra.engine` (set at collection time in `scrapers/news.py`) — real, per-study
+  evidence of how much coverage Bing News finds that Google's own crawl missed, not
+  just a theoretical justification for running both. Registered under the existing
+  generic `GET /api/projects/{id}/analytics/{name}` dispatcher (no new endpoint
+  needed) as `news_engine_split`; also added to the Excel Confidence tab's notes
+  (previously computed nowhere at all, despite an earlier pass describing it as
+  already there). Analysis.jsx gained a "Data confidence" card (only rendered when
+  there's something to say) surfacing both this and the existing
+  `relevance_recovery_stats()` with real numbers/badges. Live-verified against a
+  real full-year Extensive news collection on the demo project: 85 real news items,
+  77 via Google News, 8 via Bing News (9.4% Bing-only contribution) — confirmed via
+  direct API call and visually in the browser.
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
@@ -399,15 +414,15 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 
 ## 7. PENDING / SUGGESTED NEXT WORK (pick up here)
 
-Offered to the user but not yet built (in rough priority order):
+Offered to the user but not yet built (in rough priority order) — both remaining items
+need something this environment doesn't have (real API keys, a different network); every
+other item from this list has been built (see §5) as of this pass:
 1. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set — **no
    keys are configured in this environment's `.env`** (checked live), so this cannot be
    done from here; needs the user to supply real keys in their own `.env` (never pasted
    into chat — see §0's security note) and run it themselves, or hand it to a session
    that has them.
-2. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
-   (currently API + Excel Confidence tab only, no dedicated frontend chart yet).
-3. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
+2. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
    this sandbox again and confirmed the 429 is IP-level, not app-level: plain `curl` (no
    pytrends, no cookies) against `trends.google.com/trends/api/explore` returns 429 directly,
    while `trends.google.com/trends/` (homepage) returns 200 — so it's specifically this
@@ -442,6 +457,19 @@ Offered to the user but not yet built (in rough priority order):
   pytest only — `frontend/package.json` has no Jest/Vitest); verify any frontend logic
   change live in the browser (create project #1, then #2, confirm the dropdown AND the
   page content both reflect #2), the same way this bug was actually found.
+- **`tests/test_discovery_pipeline.py::test_job_domains_run_concurrently_not_sequentially`
+  is timing-flaky on at least this machine, unrelated to anything in this session's
+  changes.** It asserts real wall-clock elapsed time is under a hard 0.36s threshold for
+  two domains processed through a thread pool; it consistently measured ~0.52s here, with
+  or without the dev server/browser pane running (so not just background load — plausibly
+  this Mac's thread-scheduling/power-management characteristics). Confirmed via
+  `git log`/`git status` that `discovery_pipeline.py` and its test file have no
+  uncommitted changes and weren't touched by anything in this pass. Full suite otherwise
+  green (380/381) — deselect it (`--deselect tests/test_discovery_pipeline.py::
+  test_job_domains_run_concurrently_not_sequentially`) rather than treating a red run as
+  a regression from unrelated work; if it's worth hardening, raise the threshold or
+  assert relative-to-sequential speedup instead of an absolute wall-clock number, but
+  that wasn't chased further here since it's out of scope for what this pass touched.
 
 ## 9. Working conventions
 

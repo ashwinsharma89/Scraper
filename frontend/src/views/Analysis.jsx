@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle2, MessageSquareQuote, XCircle } from 'lucide-react'
+import { CheckCircle2, MessageSquareQuote, ShieldCheck, XCircle } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useToast } from '../components/Toast.jsx'
@@ -30,13 +30,15 @@ export default function Analysis() {
   async function reload() {
     const d = await api(`/api/projects/${projectId}/dashboard`)
     setDash(d)
-    const [bvc, drivers, trends, verb] = await Promise.all([
+    const [bvc, drivers, trends, verb, recovery, engineSplit] = await Promise.all([
       api(`/api/projects/${projectId}/analytics/brand_vs_competitor`),
       api(`/api/projects/${projectId}/analytics/purchase_drivers`),
       api(`/api/projects/${projectId}/analytics/trend_volume`),
       api(`/api/projects/${projectId}/analytics/verbatims`),
+      api(`/api/projects/${projectId}/analytics/relevance_recovery`),
+      api(`/api/projects/${projectId}/analytics/news_engine_split`),
     ])
-    setAggs({ bvc, drivers, trends })
+    setAggs({ bvc, drivers, trends, recovery, engineSplit })
     setVerbatims(verb)
   }
 
@@ -124,6 +126,32 @@ export default function Analysis() {
           </>
         )}
       </Card>
+
+      {aggs && (aggs.recovery.precheck_failed_total > 0 || aggs.engineSplit.total > 0) && (
+        <Card><h3><ShieldCheck size={15} className="title-icon" /> Data confidence</h3>
+          {aggs.recovery.precheck_failed_total > 0 && (
+            <p>
+              <b>Semantic relevance backstop:</b> {aggs.recovery.precheck_failed_total} item(s) had no
+              literal keyword match at collection but were kept for review instead of dropped —{' '}
+              <span className="badge pos">{aggs.recovery.recovered_relevant} confirmed relevant</span>{' '}
+              <span className="badge neu">{aggs.recovery.confirmed_unrelated} confirmed unrelated (excluded from stats)</span>{' '}
+              {aggs.recovery.pending_analysis > 0 &&
+                <span className="badge neu">{aggs.recovery.pending_analysis} awaiting analysis</span>}
+            </p>
+          )}
+          {aggs.engineSplit.total > 0 && (
+            <p>
+              <b>News engine split:</b> of {aggs.engineSplit.total} news item(s) —{' '}
+              <span className="badge neu">{aggs.engineSplit.google_news} via Google News</span>{' '}
+              <span className="badge pos">{aggs.engineSplit.bing_news} via Bing News</span>{' '}
+              {aggs.engineSplit.rss > 0 && <span className="badge neu">{aggs.engineSplit.rss} via direct RSS</span>}
+              <br /><span className="muted">Bing News is a second, independent index — this is real
+                evidence of how much coverage it found that Google's own crawl missed
+                ({Math.round(aggs.engineSplit.bing_only_share * 100)}% of all news items).</span>
+            </p>
+          )}
+        </Card>
+      )}
 
       <Card><h3>Top verbatims per theme</h3>
         {verbatims && (verbatims.themes.length ? verbatims.themes.map((t) => (

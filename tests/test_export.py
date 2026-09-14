@@ -170,6 +170,26 @@ def test_export_exclude_unrelated_drops_only_unrelated_rows_from_raw_tabs(fresh_
     assert "Target brand only" in _summary_dict(wb2)["Raw data tabs filter"]
 
 
+def test_confidence_tab_reports_the_news_engine_split(fresh_db, tmp_path):
+    """HANDOFF §7: surface the Bing/Google split -- until now the Confidence tab never
+    reported it at all (it wasn't computed anywhere in analytics.py), despite HANDOFF
+    describing it as already there."""
+    from openpyxl import load_workbook
+
+    pid = storage.create_project("Engine Split Test", _cfg())
+    run_id = storage.start_run(pid, "news", {})
+    storage.save_items(pid, run_id, "news", [
+        {"title": "a", "text": "x", "link": "http://x/a", "extra": {"engine": "google_news"}},
+        {"title": "b", "text": "x", "link": "http://x/b", "extra": {"engine": "bing_news"}},
+    ])
+    path = tmp_path / "engine.xlsx"
+    export.build_workbook(pid, out_path=str(path))
+    wb = load_workbook(str(path))
+    notes = [c.value for row in wb["Confidence"].iter_rows() for c in row if c.value]
+    assert any("News engine split" in n and "1 via Google News" in n and "1 via Bing News" in n
+              for n in notes)
+
+
 def test_data_tabs_carry_a_self_documenting_description_row(fresh_db, tmp_path):
     """HANDOFF §7: "per-tab description headers in the Excel (self-documenting)" -- a
     raw data tab opened on its own (detached from Methodology, e.g. forwarded as a

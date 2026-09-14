@@ -225,6 +225,37 @@ def items_by_domain(project_id: int, source: str = "generic_site", limit: int = 
            "low_confidence": total < LOW_CONFIDENCE_THRESHOLD}
 
 
+def news_engine_split(project_id: int) -> Dict[str, Any]:
+    """HANDOFF §7: surface the Bing/Google split in the UI, not just implicitly via the
+    raw item count. Google News and Bing News are two INDEPENDENT indices over the
+    same query (scrapers/news.py's whole rationale for running both) — this reports
+    how many stored "news"-channel items came from each engine (extra.engine, set at
+    collection time in scrapers/news.py's _collect_feed), the concrete, per-study
+    evidence that running Bing alongside Google actually contributes items Google's
+    own crawl missed, not just theoretical redundancy. Counts raw collected items
+    (not just analyzed ones) — this is a collection-provenance stat, matching
+    items_by_channel()/items_by_domain()'s convention, not an analysis stat."""
+    rows = storage.list_items(project_id, source="news", limit=20000)
+    counts: Counter = Counter()
+    for r in rows:
+        engine = (r.get("extra", {}) or {}).get("engine") or "unknown"
+        counts[engine] += 1
+    total = sum(counts.values())
+    return {
+        "total": total,
+        "google_news": counts.get("google_news", 0),
+        "bing_news": counts.get("bing_news", 0),
+        "rss": counts.get("rss", 0),
+        # An item is only ever stored under engine="bing_news" if dedup didn't already
+        # match it to an earlier-stored item (Google News runs first within one
+        # collect() call, per scrapers/news.py's ordering) -- so this really is Bing's
+        # incremental, non-overlapping contribution in the common case, not just its
+        # raw share. Honest caveat: if Bing was collected in an EARLIER separate run
+        # than Google, dedup order flips and this undercounts Bing's true find rate.
+        "bing_only_share": round(counts.get("bing_news", 0) / total, 3) if total else 0.0,
+    }
+
+
 def dashboard(project_id: int) -> Dict[str, Any]:
     """Live sentiment×channel dashboard with net scores and language breakdown."""
     channels = sentiment_by_channel(project_id)

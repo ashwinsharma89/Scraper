@@ -782,6 +782,7 @@ def api_analytics(pid: int, name: str, user: str = Depends(require_user)):
         "brand_vs_competitor": lambda: {"data": analytics.brand_vs_competitor_sentiment(pid)},
         "verbatims": lambda: analytics.top_verbatims_per_theme(pid),
         "relevance_recovery": lambda: analytics.relevance_recovery_stats(pid),
+        "news_engine_split": lambda: analytics.news_engine_split(pid),
         "items_by_channel": lambda: {"data": analytics.items_by_channel(pid)},
         "items_by_domain": lambda: analytics.items_by_domain(pid),
     }

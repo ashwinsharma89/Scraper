@@ -293,6 +293,7 @@ def _confidence_tab(ws, project_id, styles):
     ws["A2"].alignment = styles["wrap"]
     dash = analytics.dashboard(project_id)
     recovery = analytics.relevance_recovery_stats(project_id)
+    engine_split = analytics.news_engine_split(project_id)
 
     notes = []
     if dash["syndication_ratio"] > 0:
@@ -307,6 +308,12 @@ def _confidence_tab(ws, project_id, styles):
                      f"{recovery['recovered_relevant']} confirmed relevant, "
                      f"{recovery['confirmed_unrelated']} confirmed unrelated (excluded above), "
                      f"{recovery['pending_analysis']} still awaiting analysis.")
+    if engine_split["total"] > 0:
+        notes.append(f"ℹ News engine split: {engine_split['google_news']} via Google News, "
+                     f"{engine_split['bing_news']} via Bing News ({round(engine_split['bing_only_share'] * 100)}% "
+                     f"of all news items) that Google's own crawl did not already surface, "
+                     f"{engine_split['rss']} via direct publisher RSS — real evidence running both "
+                     f"search engines finds coverage a single one would have missed.")
     row = 3
     for note in notes:
         ws.cell(row=row, column=1, value=note).alignment = styles["wrap"]
