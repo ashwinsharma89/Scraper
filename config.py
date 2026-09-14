@@ -412,12 +412,24 @@ def suggest_subreddits(country_name: str, category_type: str, category: str = ""
     multi-word categories are joined with no separator (e.g. "electric scooters" ->
     "electricscooters", itself a real subreddit), matching how compound-topic
     subreddits are actually named in practice.
+
+    Follow-up gap found live (user report: "there are indian coffee communities
+    like coffeeindia, indiacoffee"): both orderings are REAL — confirmed live,
+    r/coffeeindia responds with "This community is dedicated to the coffee
+    community in India..." as its own subtitle — but neither was ever guessed;
+    only the bare category and bare country were tried separately, never joined.
+    Country+category compounds (both orderings, since real subreddits use either)
+    are now added right after the bare category guess, still ahead of the generic
+    category_type patterns.
     """
     candidates: List[str] = []
     cat_slug = re.sub(r"[^a-z0-9]", "", (category or "").strip().lower())
+    slug = re.sub(r"[^a-z0-9]", "", (country_name or "").strip().lower())
     if cat_slug:
         candidates.append(cat_slug)  # e.g. r/coffee -- the obvious, highest-value guess
-    slug = (country_name or "").strip().lower().replace(" ", "")
+    if cat_slug and slug:
+        candidates.append(f"{cat_slug}{slug}")  # e.g. r/coffeeindia -- confirmed real live
+        candidates.append(f"{slug}{cat_slug}")  # e.g. r/indiacoffee -- the other real ordering
     if slug:
         candidates.append(slug)  # e.g. r/singapore
         candidates.append(f"{slug}fire")  # finance communities are common

@@ -427,6 +427,22 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   with the earlier relevance-filter fix, input #2) returned 141 items, **94 of them
   (67%) from r/coffee alone** — a dramatic, real improvement from the original
   "0/99 relevant" complaint.
+- **Follow-up real gap found + fixed (user report: "there are indian coffee
+  communities like coffeeindia, indiacoffee").** Both orderings confirmed real and
+  active live (r/coffeeindia's own subtitle: "This community is dedicated to the
+  coffee community in India..."; r/IndiaCoffee responds live too) — but neither was
+  ever guessed, since the bare category and bare country were only ever tried
+  separately, never joined. `suggest_subreddits()` now also adds both
+  country+category compound orderings (`{category}{country}` and
+  `{country}{category}`), right after the bare-category guess. 2 new tests.
+  Live-verified: a fresh India/coffee project's subreddits now lead with
+  `["coffee", "coffeeindia", "indiacoffee", "india", ...]`; a real Reddit collect
+  scoped to exactly `[coffeeindia, indiacoffee]` returned **85 new real items**
+  (46 from r/coffeeindia, 39 from r/indiacoffee) — genuine community discussion
+  ("Blue Tokai is the new Toffee Coffee Roasters!", "How much coffee you need in a
+  month?", brewing/gear talk), with the earlier relevance-filter fix (input #2)
+  still correctly dropping 38 off-topic posts even within these topically-focused
+  communities.
 - **Real gap found + fixed (user report, with a pasted ~180-site real list): "why
   you are not able to find out these are relevant sources... also, search within
   these sites?").** Two real issues, both fixed:

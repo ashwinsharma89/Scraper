@@ -339,6 +339,28 @@ def test_suggest_subreddits_leads_with_the_category_itself():
     assert "india" in out and "food" in out  # existing country/category_type patterns still present
 
 
+def test_suggest_subreddits_includes_country_category_compounds_both_orderings():
+    """Follow-up gap found live (user report: "there are indian coffee communities
+    like coffeeindia, indiacoffee"): both orderings are REAL, confirmed live --
+    r/coffeeindia's own subtitle is "This community is dedicated to the coffee
+    community in India...", and r/IndiaCoffee responds live too -- but neither
+    ordering was ever guessed; the bare category and bare country were only ever
+    tried separately, never joined. Both compounds must appear, ranked ahead of the
+    generic category_type patterns (right after the bare category guess)."""
+    out = config.suggest_subreddits("India", "fmcg_food", "coffee")
+    assert "coffeeindia" in out
+    assert "indiacoffee" in out
+    assert out.index("coffeeindia") < out.index("food")
+    assert out.index("indiacoffee") < out.index("food")
+
+
+def test_suggest_subreddits_compounds_need_both_category_and_country():
+    # No country -> no compound guess possible, no crash either.
+    out = config.suggest_subreddits("", "fmcg_food", "coffee")
+    assert out[0] == "coffee"
+    assert not any("coffee" in c and c != "coffee" for c in out)
+
+
 def test_suggest_subreddits_category_slug_strips_spaces_and_punctuation():
     """Reddit subreddit names are alphanumeric-only -- a multi-word category must
     still produce a single, real-looking candidate (e.g. r/electricscooters, itself
