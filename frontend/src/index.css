@@ -333,6 +333,13 @@ pre.report { background: #0b1020; color: #d7e0f7; padding: 1.1rem; border-radius
 .pick-bucket { font-size: 11.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
   font-weight: 700; margin: 1rem 0 .3rem; }
 .pick-bucket:first-of-type { margin-top: .4rem; }
+/* Bulk select-all/clear links next to a bucket heading or list header — real feedback:
+   "every site has to be selected manually by a checkbox" once a bucket returns 20+ real
+   sites. Text-button styling (not a boxed button) so it doesn't compete visually with the
+   uppercase bucket label it sits beside. */
+.link-btn { background: none; color: var(--primary); border: 0; box-shadow: none;
+  padding: 0; text-transform: none; letter-spacing: normal; font-weight: 600; }
+.link-btn:hover { background: none; text-decoration: underline; }
 .spinner-line { color: var(--muted); font-size: 13px; padding: .3rem 0; }
 .confidence-lo { color: var(--warn); font-weight: 700; }
 .confidence-hi { color: var(--good); font-weight: 700; }

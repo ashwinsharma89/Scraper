@@ -614,6 +614,29 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   country+category compound subreddit names in BOTH orderings (e.g. `coffeeindia` AND
   `indiacoffee`) since real-world community naming isn't consistent — both confirmed
   live as real, active subreddits via direct `curl` before the fix shipped.
+- **Bulk select/deselect for discovered sites** (user feedback: "selection of sites is
+  little complex as every site has to be selected manually by a checkbox"). Real
+  friction that got materially worse after the per-city-edition fix above — one source
+  type can now return 19-29+ real sites (5 separate LBB city editions alone), all
+  needing individual clicks. Added a global "Select all N / Deselect all" control plus
+  a per-bucket "select all N / clear" link next to each source-type heading, in both
+  places this exact checkbox-only pattern existed:
+  `frontend/src/views/SourcePlan.jsx`'s `SiteResults` (existing-project site discovery)
+  and `frontend/src/wizards/DiscoveryWizard/Step4Sites.jsx` (new-project wizard). Both
+  bulk actions set `selectedDomains`/`selectedSiteDomains` directly rather than routing
+  through the per-checkbox `onToggle` handler — deliberate: the wizard's `onToggle` has
+  a side effect (auto-expanding to similar sites via one Claude call per NEW domain
+  checked), meant for a single deliberate click, not something 20 simultaneous checks
+  should each separately trigger. New `.link-btn` CSS class (`index.css`) for the
+  bucket-level text links so they don't visually compete with the uppercase bucket
+  label. No backend change, no new pytest (this app has no frontend test framework —
+  verified via a real production build (`npm run build`, clean) and live in the running
+  app's own browser: read actual DOM checkbox `.checked` state before/after each
+  control, not just visual screenshots — confirmed global select-all/deselect-all,
+  per-bucket select-all/clear, and the "Collect from N checked site(s)" counter all
+  update correctly together, using a real discovered-sites list (20 real Singapore
+  F&B sites from the demo project's live "✨ Suggest source types" → "Find real sites"
+  flow).
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 

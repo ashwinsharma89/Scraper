@@ -226,6 +226,19 @@ export default function SourcePlan() {
     })
   }
 
+  // User feedback: "selection of sites is little complex as every site has to be
+  // selected manually by a checkbox" — real friction once a source type returns
+  // 19-29+ real sites (input #7's per-city-edition fix made this common: LBB alone
+  // now lists 5 separate city editions). Bulk toggle for the whole list or one
+  // bucket at a time; no network calls, so this is instant either way.
+  function toggleManySites(domains, checked) {
+    setSelectedSiteDomains((prev) => {
+      const next = new Set(prev)
+      domains.forEach((d) => (checked ? next.add(d) : next.delete(d)))
+      return next
+    })
+  }
+
   // "Also, search within these sites?" (user report, with a pasted ~180-real-site
   // list) — the fastest, most direct way to use a list a user already compiled
   // themselves (own research, ChatGPT, wherever) instead of waiting on a re-tuned AI
@@ -446,6 +459,7 @@ export default function SourcePlan() {
         </div>
         {!!sites.length && (
           <SiteResults sites={sites} checked={selectedSiteDomains} onToggle={toggleSite}
+            onToggleMany={toggleManySites}
             onConfirm={doConfirmSitesAndCollect} launching={launchingCollect} />
         )}
       </Card>
@@ -617,8 +631,10 @@ function SourceTypeResults({ r, sites, discoveringFor, onFindSites }) {
   )
 }
 
-function SiteResults({ sites, checked, onToggle, onConfirm, launching }) {
+function SiteResults({ sites, checked, onToggle, onToggleMany, onConfirm, launching }) {
   const buckets = [...new Set(sites.map((s) => s.bucket || ''))]
+  const allDomains = sites.map((s) => s.domain)
+  const allChecked = allDomains.length > 0 && allDomains.every((d) => checked.has(d))
   return (
     <div className="card" style={{ borderColor: 'var(--primary)' }}>
       <div className="card-head"><h4>{sites.length} candidate site(s)</h4>
@@ -629,9 +645,25 @@ function SiteResults({ sites, checked, onToggle, onConfirm, launching }) {
       <p className="muted">Sites with a proven track record are pre-checked; new/unverified
         ones need your explicit OK. Confirming launches a real collection job (sitemap-crawled,
         keyword-matched pages) — watch it in Collect → Recent jobs.</p>
-      {buckets.map((bucket) => (
+      <div className="row" style={{ marginBottom: '.4rem' }}>
+        <button type="button" className="ghost" onClick={() => onToggleMany(allDomains, !allChecked)}>
+          {allChecked ? 'Deselect all' : `Select all ${sites.length}`}
+        </button>
+      </div>
+      {buckets.map((bucket) => {
+        const bucketDomains = sites.filter((s) => (s.bucket || '') === bucket).map((s) => s.domain)
+        const bucketAllChecked = bucketDomains.every((d) => checked.has(d))
+        return (
         <div key={bucket || '_'}>
-          {bucket && <h5 className="pick-bucket">{bucket}</h5>}
+          {bucket && (
+            <h5 className="pick-bucket" style={{ display: 'flex', alignItems: 'center', gap: '.6rem' }}>
+              {bucket}
+              <button type="button" className="link-btn" style={{ fontWeight: 400, fontSize: '.8em' }}
+                onClick={() => onToggleMany(bucketDomains, !bucketAllChecked)}>
+                {bucketAllChecked ? 'clear' : `select all ${bucketDomains.length}`}
+              </button>
+            </h5>
+          )}
           <div className="pick-list">
             {sites.filter((s) => (s.bucket || '') === bucket).map((s) => (
               <label className="pick-row" key={s.domain}>
@@ -650,7 +682,8 @@ function SiteResults({ sites, checked, onToggle, onConfirm, launching }) {
             ))}
           </div>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

@@ -49,14 +49,44 @@ export default function Step4Sites({ w, patch, api, geoScope }) {
 
   const buckets = [...new Set(w.sites.map((s) => s.bucket || ''))]
 
+  // Bulk select for a bucket sets selectedDomains directly rather than routing through
+  // onToggle: onToggle's side effect (auto-expanding to similar sites, one Claude call
+  // per NEW domain) is meant for a deliberate single click, not something 20 simultaneous
+  // checks should each separately trigger. Real friction fixed here: "every site has to
+  // be selected manually by a checkbox" once a bucket returns many real sites.
+  function setManyChecked(domains, checked) {
+    const next = new Set(w.selectedDomains)
+    domains.forEach((d) => (checked ? next.add(d) : next.delete(d)))
+    patch({ selectedDomains: next })
+  }
+
+  const allDomains = w.sites.map((s) => s.domain)
+  const allChecked = allDomains.length > 0 && allDomains.every((d) => w.selectedDomains.has(d))
+
   return (
     <>
       <p>Confirm which real sites to actually collect from. Sites with a proven track
         record are pre-checked; new/unverified ones need your explicit OK. Checking a
         site automatically looks for other real sites of the same kind.</p>
-      {buckets.map((bucket) => (
+      <div className="row" style={{ marginBottom: '.4rem' }}>
+        <button type="button" className="ghost" onClick={() => setManyChecked(allDomains, !allChecked)}>
+          {allChecked ? 'Deselect all' : `Select all ${w.sites.length}`}
+        </button>
+      </div>
+      {buckets.map((bucket) => {
+        const bucketDomains = w.sites.filter((s) => (s.bucket || '') === bucket).map((s) => s.domain)
+        const bucketAllChecked = bucketDomains.every((d) => w.selectedDomains.has(d))
+        return (
         <div key={bucket || '_'}>
-          {bucket && <h3 className="pick-bucket">{bucket}</h3>}
+          {bucket && (
+            <h3 className="pick-bucket" style={{ display: 'flex', alignItems: 'center', gap: '.6rem' }}>
+              {bucket}
+              <button type="button" className="link-btn" style={{ fontWeight: 400, fontSize: '.8em' }}
+                onClick={() => setManyChecked(bucketDomains, !bucketAllChecked)}>
+                {bucketAllChecked ? 'clear' : `select all ${bucketDomains.length}`}
+              </button>
+            </h3>
+          )}
           <div className="pick-list">
             {w.sites.filter((s) => (s.bucket || '') === bucket).map((s) => (
               <label className="pick-row" key={s.domain}>
@@ -83,7 +113,8 @@ export default function Step4Sites({ w, patch, api, geoScope }) {
             ))}
           </div>
         </div>
-      ))}
+        )
+      })}
     </>
   )
 }
