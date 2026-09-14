@@ -68,6 +68,52 @@ def test_suggest_terms_calls_llm_and_summarizes():
     assert "hi" in calls[0] and "te" in calls[0]  # other configured languages named in prompt
 
 
+def test_suggest_terms_scales_max_tokens_with_language_count(monkeypatch):
+    """Real bug, found live: a fixed 1500-token budget truncated the JSON response
+    mid-object for a real 10-language study (several Indic scripts, which tokenize
+    far less efficiently per character than English), producing a literal
+    "Expecting ',' delimiter" json.loads failure. The budget must scale with
+    language count, since that's what actually drives output size."""
+    import analysis
+
+    captured = {}
+
+    def fake_call_claude(prompt, model=None, max_tokens=3000):
+        captured["max_tokens"] = max_tokens
+        return LLM_JSON
+
+    monkeypatch.setattr(analysis, "call_claude", fake_call_claude)
+
+    cfg_few = config.run_wizard({"market": {"country": "India", "languages": ["en"]},
+                                 "product": {"brand": "", "category": "coffee",
+                                            "category_type": "fmcg_food"}})
+    term_expansion.suggest_terms(cfg_few, "coffee")
+    few_langs_tokens = captured["max_tokens"]
+
+    cfg_many = config.run_wizard({
+        "market": {"country": "India",
+                  "languages": ["en", "hi", "ta", "te", "kn", "ml", "mr", "gu", "pa", "bn"]},
+        "product": {"brand": "", "category": "coffee", "category_type": "fmcg_food"},
+    })
+    term_expansion.suggest_terms(cfg_many, "coffee")
+    many_langs_tokens = captured["max_tokens"]
+
+    assert many_langs_tokens > few_langs_tokens
+    assert many_langs_tokens >= 1500 + 350 * 10 - 1  # the 10-language case gets real headroom
+
+
+def test_parse_expansion_truncated_json_gets_an_actionable_error():
+    """The exact real error shape reported live: 'Expecting , delimiter' from a
+    response cut off mid-object (one completed translation entry, one cut short)."""
+    truncated = ('{"variants": ["instant coffee"], "brands": ["Starbucks"], '
+                '"translations": {"hi": {"term": "x", "variants": ["y"]}, "te": {"term')
+    try:
+        term_expansion.parse_expansion(truncated)
+        assert False, "should have raised"
+    except ValueError as e:
+        assert "cut off" in str(e)
+
+
 def test_suggest_terms_requires_a_term():
     try:
         term_expansion.suggest_terms(_cfg(), "", call_fn=lambda p, m: LLM_JSON)

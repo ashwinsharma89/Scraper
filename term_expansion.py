@@ -82,7 +82,20 @@ def parse_expansion(text: str) -> Dict[str, Any]:
     end = text.rfind("}")
     if start == -1 or end == -1 or end < start:
         raise ValueError("No JSON object in model response")
-    data = json.loads(text[start:end + 1])
+    try:
+        data = json.loads(text[start:end + 1])
+    except json.JSONDecodeError as exc:
+        # A truncated response (hit the token budget mid-object) and a genuinely
+        # malformed one look identical to json.loads -- but the former is common
+        # enough here (translations scale with language count) to name explicitly
+        # rather than surfacing a bare parser position to the wizard. Unbalanced
+        # brace/bracket counts across the WHOLE raw text are a reliable truncation
+        # signal (a genuinely malformed-but-complete response is still balanced).
+        unbalanced = (text.count("{") != text.count("}")) or (text.count("[") != text.count("]"))
+        hint = (" -- looks like the response was cut off before finishing (a "
+               "too-small token budget for how many languages/variants were "
+               "requested), not malformed JSON" if unbalanced else "")
+        raise ValueError(f"Could not parse model response as JSON: {exc}{hint}") from exc
 
     variants = [str(v).strip() for v in (data.get("variants") or []) if v and str(v).strip()][:CAP]
     brands = [str(b).strip() for b in (data.get("brands") or []) if b and str(b).strip()][:CAP]
@@ -112,7 +125,17 @@ def suggest_terms(cfg: Dict[str, Any], term: str,
     if not term:
         raise ValueError("A term is required (e.g. the project's category or a keyword).")
 
-    call = call_fn or (lambda p, m: __import__("analysis").call_claude(p, m, max_tokens=1500))
+    # Real bug, found live: a fixed 1500-token budget truncates the JSON response mid-
+    # object once a study has enough languages -- confirmed with a 10-language study
+    # (several Indic scripts, which tokenize far less efficiently per character than
+    # English) producing a literal "Expecting ',' delimiter" json.loads failure on the
+    # cut-off output. Output size scales with language count (one "term" + up to
+    # TRANSLATION_VARIANT_CAP variants per language), not just CAP variants/brands, so
+    # the budget must scale with it too -- a bigger fixed constant would just move the
+    # same failure to a study with even more languages.
+    n_languages = len(cfg.get("market", {}).get("languages", []) or [])
+    max_tokens = min(8000, 1500 + 350 * n_languages)
+    call = call_fn or (lambda p, m: __import__("analysis").call_claude(p, m, max_tokens=max_tokens))
     prompt = build_prompt(cfg, term)
     raw = call(prompt, model or settings.analysis_model)
     result = parse_expansion(raw)
