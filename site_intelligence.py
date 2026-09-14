@@ -46,20 +46,35 @@ def _domain_of(url_or_domain: str) -> str:
     return s.lstrip("www.")
 
 
-def build_prompt(category: str, geo_scope: Optional[Dict[str, Any]] = None) -> str:
+def _where(geo_scope: Optional[Dict[str, Any]]) -> str:
     geo_scope = geo_scope or {}
     level = geo_scope.get("level", "")
     value = geo_scope.get("value", "")
     country = geo_scope.get("country", "")
-    where = f"{value} ({level}, {country})" if value and level else (country or "an unspecified market")
+    return f"{value} ({level}, {country})" if value and level else (country or "an unspecified market")
+
+
+def build_prompt(category: str, geo_scope: Optional[Dict[str, Any]] = None,
+                 source_type_hint: Optional[str] = None) -> str:
+    where = _where(geo_scope)
+    # source_type_hint (e.g. "lifestyle & food blogs", "forums") scopes the search to ONE
+    # genre instead of a single blended list across every genre at once — asked for
+    # explicitly: a category-wide call tends to return mostly mainstream news outlets
+    # (the most "famous" sites for a topic), crowding out the smaller, more specific
+    # sites (food blogs, hobbyist forums) that a genre-scoped search surfaces instead.
+    focus = (f'Focus specifically on "{source_type_hint}" — real sites of exactly that '
+            f'kind, not news outlets in general.' if source_type_hint else
+            "This includes news, lifestyle/blog, business, and any other editorial site "
+            "genuinely relevant to this category and market — not just one type.")
 
     return "\n".join([
         f'You are identifying REAL, well-known websites that are good sources of content for '
         f'the category "{category}", specific to {where}.',
         "",
-        "This includes news, lifestyle/blog, business, and any other editorial site genuinely "
-        "relevant to this category and market — not just one type. Prefer sites a person "
-        "actually reading about this category in this market would recognize.",
+        focus,
+        "Prefer sites a person actually reading about this category in this market would "
+        "recognize — including smaller/specialist sites a person deep in this topic would "
+        "know, not only the single most famous mainstream outlet.",
         "",
         "Return ONLY a JSON object with this key:",
         '  "sites": [ {"name": "<real display name>", "domain": "<real base domain, e.g. '
@@ -67,6 +82,34 @@ def build_prompt(category: str, geo_scope: Optional[Dict[str, Any]] = None) -> s
         f'"why": "<one short reason>"}} ] — up to {CAP}, most relevant/well-known first',
         "",
         "Rules:",
+        "- Every site must be REAL — do not invent a name or guess at a domain you are not "
+        "confident about.",
+        "- No commentary outside the JSON.",
+    ])
+
+
+def build_similar_sites_prompt(seed_domain: str, category: str,
+                               geo_scope: Optional[Dict[str, Any]] = None) -> str:
+    """"Sites like X" — a human just confirmed real interest in one specific site; find
+    others of the same genre/audience rather than re-running the generic category search."""
+    where = _where(geo_scope)
+    return "\n".join([
+        f'A market-research study is collecting content about "{category}" in {where}, and '
+        f'has confirmed "{seed_domain}" as a genuinely good, real source.',
+        "",
+        f'Name other REAL websites SIMILAR to "{seed_domain}" — same genre, audience, and '
+        f'general kind of content (e.g. if it is a mainstream national newspaper, find other '
+        f'mainstream national newspapers; if it is a youth-culture/lifestyle blog, find other '
+        f'youth-culture/lifestyle blogs) — specific to this category and market.',
+        "",
+        "Return ONLY a JSON object with this key:",
+        '  "sites": [ {"name": "<real display name>", "domain": "<real base domain>", '
+        '"source_type": "<e.g. news, lifestyle, business, forum>", '
+        f'"why": "<one short reason it is similar to {seed_domain}>"}} ] — up to {CAP}, '
+        "most similar/well-known first",
+        "",
+        "Rules:",
+        f'- Do NOT include "{seed_domain}" itself in the results.',
         "- Every site must be REAL — do not invent a name or guess at a domain you are not "
         "confident about.",
         "- No commentary outside the JSON.",
@@ -100,51 +143,50 @@ def parse_sites(text: str) -> List[Dict[str, str]]:
     return sites
 
 
-def discover_sites(category: str, geo_scope: Optional[Dict[str, Any]] = None,
-                   call_fn: Optional[Callable[[str, str], str]] = None,
-                   model: Optional[str] = None) -> Dict[str, Any]:
-    """Merge the ledger's known-good sites for this category with fresh LLM candidates.
-    Read-only — nothing is written to the ledger here; see confirm_sites()."""
-    from settings import settings
+def _merge_with_ledger(category: str, fresh: List[Dict[str, str]],
+                       include_known: bool = True,
+                       exclude_domains: Optional[set] = None) -> List[Dict[str, Any]]:
+    """Shared by discover_sites() and find_similar_sites(): known ledger sites (with
+    real track record) plus fresh LLM candidates not already covered, each tagged with
+    its trust state. `include_known=False` skips listing every known ledger site up
+    front (used by find_similar_sites, which is about NEW candidates around one seed,
+    not a full category re-listing) but still enriches fresh candidates that happen
+    to already be in the ledger.
+    """
     import storage
 
-    category = (category or "").strip()
-    if not category:
-        raise ValueError("A category is required to discover sites.")
-
+    exclude_domains = exclude_domains or set()
     known_rows = storage.list_site_intelligence(category)
     known_by_domain = {r["domain"]: r for r in known_rows}
 
-    call = call_fn or (lambda p, m: __import__("analysis").call_claude(p, m, max_tokens=2000))
-    prompt = build_prompt(category, geo_scope)
-    raw = call(prompt, model or settings.analysis_model)
-    fresh = parse_sites(raw)
-
     results: List[Dict[str, Any]] = []
-    seen = set()
+    seen = set(exclude_domains)
 
-    # Known sites first, most-confident already (storage.list_site_intelligence's own order).
-    for row in known_rows:
-        trusted = (
-            row["validated_by_human"]
-            or (row["times_used"] >= MIN_USES_TO_AUTO_TRUST
-                and (row["confidence"] or 0) >= MIN_CONFIDENCE_TO_AUTO_TRUST)
-        )
-        results.append({
-            "name": row["name"] or row["domain"],
-            "domain": row["domain"],
-            "source_type": row["source_type"] or "",
-            "why": f"Known from {row['times_used']} prior use(s)" if row["times_used"] else
-                   "Previously suggested, not yet used",
-            "known": True,
-            "times_used": row["times_used"],
-            "confidence": row["confidence"],
-            "validated_by_human": bool(row["validated_by_human"]),
-            "needs_validation": not trusted,
-        })
-        seen.add(row["domain"])
+    if include_known:
+        # Known sites first, most-confident already (list_site_intelligence's own order).
+        for row in known_rows:
+            if row["domain"] in seen:
+                continue
+            trusted = (
+                row["validated_by_human"]
+                or (row["times_used"] >= MIN_USES_TO_AUTO_TRUST
+                    and (row["confidence"] or 0) >= MIN_CONFIDENCE_TO_AUTO_TRUST)
+            )
+            results.append({
+                "name": row["name"] or row["domain"],
+                "domain": row["domain"],
+                "source_type": row["source_type"] or "",
+                "why": f"Known from {row['times_used']} prior use(s)" if row["times_used"] else
+                       "Previously suggested, not yet used",
+                "known": True,
+                "times_used": row["times_used"],
+                "confidence": row["confidence"],
+                "validated_by_human": bool(row["validated_by_human"]),
+                "needs_validation": not trusted,
+            })
+            seen.add(row["domain"])
 
-    # Fresh LLM candidates not already covered by the ledger.
+    # Fresh LLM candidates not already covered.
     for site in fresh:
         if site["domain"] in seen:
             continue
@@ -159,14 +201,74 @@ def discover_sites(category: str, geo_scope: Optional[Dict[str, Any]] = None,
             "needs_validation": not (prior and prior["validated_by_human"]),
         })
 
+    return results
+
+
+def discover_sites(category: str, geo_scope: Optional[Dict[str, Any]] = None,
+                   source_type_hint: Optional[str] = None,
+                   call_fn: Optional[Callable[[str, str], str]] = None,
+                   model: Optional[str] = None) -> Dict[str, Any]:
+    """Merge the ledger's known-good sites for this category with fresh LLM candidates.
+    Read-only — nothing is written to the ledger here; see confirm_sites().
+
+    `source_type_hint` (e.g. "lifestyle & food blogs", "forums") scopes the LLM search to
+    one genre — pass it once per source type the wizard's step 4 confirmed, rather than
+    one blended call, so smaller/specialist sites aren't crowded out by mainstream news.
+    """
+    from settings import settings
+
+    category = (category or "").strip()
+    if not category:
+        raise ValueError("A category is required to discover sites.")
+
+    call = call_fn or (lambda p, m: __import__("analysis").call_claude(p, m, max_tokens=2000))
+    prompt = build_prompt(category, geo_scope, source_type_hint)
+    raw = call(prompt, model or settings.analysis_model)
+    fresh = parse_sites(raw)
+
+    results = _merge_with_ledger(category, fresh, include_known=True)
     return {
         "category": category,
+        "source_type_hint": source_type_hint,
         "sites": results,
         "_summary": {
             "total": len(results),
             "known": sum(1 for r in results if r["known"]),
             "needs_validation": sum(1 for r in results if r["needs_validation"]),
         },
+    }
+
+
+def find_similar_sites(seed_domain: str, category: str,
+                       geo_scope: Optional[Dict[str, Any]] = None,
+                       call_fn: Optional[Callable[[str, str], str]] = None,
+                       model: Optional[str] = None) -> Dict[str, Any]:
+    """"Sites like X" — asked for explicitly: confirming one real site (e.g.
+    hindustantimes.com) should make it easy to find more of the same genre (toi.com,
+    indianexpress.com, ...) without re-running the whole category search. Read-only,
+    same contract as discover_sites(): nothing written here, confirm_sites() still the
+    only write path.
+    """
+    from settings import settings
+
+    seed_domain = _domain_of(seed_domain)
+    category = (category or "").strip()
+    if not seed_domain:
+        raise ValueError("A seed domain is required.")
+    if not category:
+        raise ValueError("A category is required.")
+
+    call = call_fn or (lambda p, m: __import__("analysis").call_claude(p, m, max_tokens=2000))
+    prompt = build_similar_sites_prompt(seed_domain, category, geo_scope)
+    raw = call(prompt, model or settings.analysis_model)
+    fresh = [s for s in parse_sites(raw) if s["domain"] != seed_domain]
+
+    results = _merge_with_ledger(category, fresh, include_known=False,
+                                 exclude_domains={seed_domain})
+    return {
+        "seed_domain": seed_domain, "category": category, "sites": results,
+        "_summary": {"total": len(results),
+                    "needs_validation": sum(1 for r in results if r["needs_validation"])},
     }
 
 

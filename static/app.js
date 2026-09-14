@@ -1242,7 +1242,7 @@ function discDefaults() {
     category: "", confidence: null, reasoning: "", needsConfirmation: false,
     languages: [], selectedLanguages: new Set(),
     sourceTypes: [], selectedSourceTypes: new Set(),
-    sites: [], selectedDomains: new Set(),
+    sites: [], selectedDomains: new Set(), expandedDomains: new Set(), similarFoundCounts: {},
     termSuggestions: null, selectedVariants: new Set(), selectedBrands: new Set(),
     volumeCap: 500, runDaily: false,
     busy: false,
@@ -1422,37 +1422,103 @@ function discHasGenericSiteType() {
   return Disc.sourceTypes.some(s => Disc.selectedSourceTypes.has(s.name) && s.strategy === "generic_site_discovery");
 }
 
-async function discAdvanceFrom3() {
-  if (Disc.selectedSourceTypes.size === 0) throw new Error("Select at least one source type.");
-  if (discHasGenericSiteType()) {
-    const r = await api("/api/discovery/sites", { method: "POST",
-      body: { category: Disc.category, geo_scope: discGeoScope() } });
-    Disc.sites = r.sites;
-    Disc.selectedDomains = new Set(r.sites.filter(s => !s.needs_validation).map(s => s.domain));
-  } else {
-    Disc.sites = []; Disc.selectedDomains = new Set();
-    Disc.step++;  // skip the sites step entirely — nothing selected routes to it
+function discAddSites(newSites, bucket) {
+  const existing = new Set(Disc.sites.map(s => s.domain));
+  for (const s of newSites) {
+    if (existing.has(s.domain)) continue;
+    existing.add(s.domain);
+    Disc.sites.push({ ...s, bucket });
   }
 }
 
+async function discAdvanceFrom3() {
+  if (Disc.selectedSourceTypes.size === 0) throw new Error("Select at least one source type.");
+  const genericTypes = Disc.sourceTypes.filter(
+    s => Disc.selectedSourceTypes.has(s.name) && s.strategy === "generic_site_discovery");
+  if (genericTypes.length === 0) {
+    Disc.sites = []; Disc.selectedDomains = new Set();
+    Disc.step++;  // skip the sites step entirely — nothing selected routes to it
+    return;
+  }
+  // One discovery call PER selected genre, not one blended call across all of them --
+  // a single category-wide call kept surfacing the same handful of mainstream outlets,
+  // crowding out smaller/specialist sites (food blogs, forums) a genre-scoped call finds.
+  Disc.sites = [];
+  Disc.expandedDomains = new Set();
+  Disc.similarFoundCounts = {};
+  const results = await Promise.all(genericTypes.map(st =>
+    api("/api/discovery/sites", { method: "POST",
+      body: { category: Disc.category, geo_scope: discGeoScope(), source_type_hint: st.name } })));
+  results.forEach((r, i) => discAddSites(r.sites, genericTypes[i].name));
+  Disc.selectedDomains = new Set(Disc.sites.filter(s => !s.needs_validation).map(s => s.domain));
+}
+
 // --- Step 4: sites (only reached when a generic-site source type was picked) -
+function discSimilarNoteHtml(domain) {
+  // Persisted in Disc state (not just left in the DOM) because discToggleSite triggers
+  // a full renderDiscStep() to show the newly-added rows -- without storing the result
+  // here, that re-render would wipe the "+ found N similar sites" message before the
+  // user ever saw it (found live: it flashed and vanished in the same tick).
+  const found = Disc.similarFoundCounts[domain];
+  if (found === undefined) return "";
+  return found > 0
+    ? `<span class="muted">+ found ${found} similar site${found === 1 ? "" : "s"}</span>`
+    : `<span class="muted">No additional similar sites found.</span>`;
+}
+
+function discSiteRowHtml(s) {
+  return `<label class="pick-row"><input type="checkbox" data-site="${esc(s.domain)}" ${Disc.selectedDomains.has(s.domain) ? "checked" : ""} />
+      <div class="pick-main"><div class="pick-name">${esc(s.name || s.domain)} <span class="muted">(${esc(s.domain)})</span>
+        ${s.known ? '<span class="badge tier1">known</span>' : ""}
+        ${s.needs_validation ? '<span class="needs-badge">needs validation</span>' : ""}
+        ${s.validated_by_human ? '<span class="badge tier1">human-validated</span>' : ""}</div>
+      <div class="pick-why">${esc(s.why || "")}${s.times_used ? ` · used ${s.times_used}× before, confidence ${Math.round((s.confidence || 0) * 100)}%` : ""}</div>
+      <div class="pick-similar" data-similar-for="${esc(s.domain)}">${discSimilarNoteHtml(s.domain)}</div></div></label>`;
+}
+
 function discStep4(body) {
   if (!Disc.sites.length) {
     body.innerHTML = `<p class="muted">No candidate sites found for this category/market.</p>`;
     return;
   }
+  const buckets = [...new Set(Disc.sites.map(s => s.bucket || ""))];
   body.innerHTML = `<p>Confirm which real sites to actually collect from. Sites with a proven
-    track record are pre-checked; new/unverified ones need your explicit OK.</p>
-    <div class="pick-list">${Disc.sites.map(s => `
-      <label class="pick-row"><input type="checkbox" data-site="${esc(s.domain)}" ${Disc.selectedDomains.has(s.domain) ? "checked" : ""} />
-        <div class="pick-main"><div class="pick-name">${esc(s.name || s.domain)} <span class="muted">(${esc(s.domain)})</span>
-          ${s.known ? '<span class="badge tier1">known</span>' : ""}
-          ${s.needs_validation ? '<span class="needs-badge">needs validation</span>' : ""}
-          ${s.validated_by_human ? '<span class="badge tier1">human-validated</span>' : ""}</div>
-        <div class="pick-why">${esc(s.why || "")}${s.times_used ? ` · used ${s.times_used}× before, confidence ${Math.round((s.confidence || 0) * 100)}%` : ""}</div></div></label>`).join("")}</div>`;
-  body.querySelectorAll("[data-site]").forEach(cb => cb.addEventListener("change", () => {
-    if (cb.checked) Disc.selectedDomains.add(cb.dataset.site); else Disc.selectedDomains.delete(cb.dataset.site);
-  }));
+    track record are pre-checked; new/unverified ones need your explicit OK. Checking a site
+    automatically looks for other real sites of the same kind.</p>
+    ${buckets.map(bucket => `
+      ${bucket ? `<h3 class="pick-bucket">${esc(bucket)}</h3>` : ""}
+      <div class="pick-list" data-bucket="${esc(bucket)}">
+        ${Disc.sites.filter(s => (s.bucket || "") === bucket).map(discSiteRowHtml).join("")}
+      </div>`).join("")}`;
+  body.querySelectorAll("[data-site]").forEach(cb => cb.addEventListener("change", () => discToggleSite(cb)));
+}
+
+async function discToggleSite(cb) {
+  const domain = cb.dataset.site;
+  if (cb.checked) {
+    Disc.selectedDomains.add(domain);
+  } else {
+    Disc.selectedDomains.delete(domain);
+    return;  // "sites like X" only makes sense when the user is affirmatively adding one
+  }
+  if (Disc.expandedDomains.has(domain)) return;  // never re-expand the same seed twice
+  Disc.expandedDomains.add(domain);
+
+  const holder = document.querySelector(`[data-similar-for="${CSS.escape(domain)}"]`);
+  if (holder) holder.innerHTML = `<span class="spinner-line">Finding similar sites…</span>`;
+  try {
+    const r = await api("/api/discovery/similar-sites", { method: "POST",
+      body: { domain, category: Disc.category, geo_scope: discGeoScope() } });
+    const before = new Set(Disc.sites.map(s => s.domain));
+    const bucket = Disc.sites.find(s => s.domain === domain)?.bucket || "";
+    discAddSites(r.sites, bucket);
+    const added = Disc.sites.filter(s => !before.has(s.domain));
+    added.forEach(s => Disc.selectedDomains.add(s.domain));  // auto-select, matching the ask
+    Disc.similarFoundCounts[domain] = added.length;
+    renderDiscStep();  // re-render either way so the persisted note above always shows
+  } catch (e) {
+    if (holder) holder.innerHTML = `<span class="muted">Couldn't find similar sites: ${esc(e.message)}</span>`;
+  }
 }
 
 async function discAdvanceFrom4() {

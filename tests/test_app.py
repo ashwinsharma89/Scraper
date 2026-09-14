@@ -236,6 +236,44 @@ def test_discover_sites_endpoint(client, monkeypatch):
     assert r.json()["sites"][0]["domain"] == "scoopwhoop.com"
 
 
+def test_discover_sites_endpoint_passes_through_source_type_hint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    import site_intelligence
+    captured = {}
+    monkeypatch.setattr(site_intelligence, "discover_sites",
+                        lambda category, geo_scope=None, source_type_hint=None, **kw:
+                        captured.update(hint=source_type_hint) or
+                        {"category": category, "source_type_hint": source_type_hint,
+                         "sites": [], "_summary": {"total": 0, "known": 0, "needs_validation": 0}})
+    r = client.post("/api/discovery/sites",
+                    json={"category": "coffee", "source_type_hint": "forums"})
+    assert r.status_code == 200
+    assert captured["hint"] == "forums"
+    assert r.json()["source_type_hint"] == "forums"
+
+
+def test_similar_sites_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    import site_intelligence
+    monkeypatch.setattr(site_intelligence, "find_similar_sites",
+                        lambda domain, category, geo_scope=None, **kw: {
+                            "seed_domain": domain, "category": category,
+                            "sites": [{"name": "Times of India", "domain": "timesofindia.indiatimes.com",
+                                      "known": False, "needs_validation": True}],
+                            "_summary": {"total": 1, "needs_validation": 1},
+                        })
+    r = client.post("/api/discovery/similar-sites",
+                    json={"domain": "hindustantimes.com", "category": "coffee"})
+    assert r.status_code == 200
+    assert r.json()["sites"][0]["domain"] == "timesofindia.indiatimes.com"
+
+
+def test_similar_sites_endpoint_400_on_empty_domain(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/discovery/similar-sites", json={"domain": "", "category": "coffee"})
+    assert r.status_code == 400
+
+
 def test_confirm_sites_endpoint_actually_writes_to_the_ledger(client, monkeypatch):
     # No mocking here -- exercise the real storage write through the real endpoint.
     monkeypatch.setenv("MODE", "solo")

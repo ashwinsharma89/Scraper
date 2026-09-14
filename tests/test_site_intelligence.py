@@ -126,3 +126,83 @@ def test_record_outcomes_requires_a_category():
         assert False, "should have raised"
     except ValueError:
         pass
+
+
+def test_build_prompt_with_source_type_hint_focuses_the_search():
+    p = si.build_prompt("coffee", source_type_hint="forums")
+    assert "forums" in p.lower()
+    assert "not news outlets in general" in p
+
+
+def test_build_prompt_without_hint_stays_broad():
+    p = si.build_prompt("coffee")
+    assert "not just one type" in p
+
+
+def test_discover_sites_passes_source_type_hint_into_the_prompt(fresh_db):
+    captured = {}
+
+    def fake_call(prompt, model):
+        captured["prompt"] = prompt
+        return LLM_JSON
+
+    r = si.discover_sites("coffee", source_type_hint="lifestyle & food blogs", call_fn=fake_call)
+    assert "lifestyle & food blogs" in captured["prompt"]
+    assert r["source_type_hint"] == "lifestyle & food blogs"
+
+
+FIND_SIMILAR_JSON = json.dumps({
+    "sites": [
+        {"name": "Times of India", "domain": "timesofindia.indiatimes.com", "source_type": "news",
+         "why": "another mainstream national newspaper"},
+        {"name": "The Hindu", "domain": "thehindu.com", "source_type": "news",
+         "why": "another mainstream national newspaper"},
+    ],
+})
+
+
+def test_find_similar_sites_returns_fresh_candidates_excluding_the_seed(fresh_db):
+    r = si.find_similar_sites("hindustantimes.com", "coffee", call_fn=lambda p, m: FIND_SIMILAR_JSON)
+    domains = {s["domain"] for s in r["sites"]}
+    assert domains == {"timesofindia.indiatimes.com", "thehindu.com"}
+    assert "hindustantimes.com" not in domains
+    assert r["seed_domain"] == "hindustantimes.com"
+
+
+def test_find_similar_sites_prompt_names_the_seed_domain():
+    p = si.build_similar_sites_prompt("hindustantimes.com", "coffee")
+    assert "hindustantimes.com" in p
+
+
+def test_find_similar_sites_excludes_seed_even_if_llm_echoes_it_back(fresh_db):
+    echoing = json.dumps({"sites": [
+        {"name": "Hindustan Times", "domain": "hindustantimes.com", "source_type": "news"},
+        {"name": "Times of India", "domain": "timesofindia.indiatimes.com", "source_type": "news"},
+    ]})
+    r = si.find_similar_sites("hindustantimes.com", "coffee", call_fn=lambda p, m: echoing)
+    domains = {s["domain"] for s in r["sites"]}
+    assert domains == {"timesofindia.indiatimes.com"}
+
+
+def test_find_similar_sites_surfaces_ledger_track_record_for_a_returned_domain(fresh_db):
+    storage.record_site_outcome("timesofindia.indiatimes.com", "coffee", kept=9, dropped=1)
+    r = si.find_similar_sites("hindustantimes.com", "coffee", call_fn=lambda p, m: FIND_SIMILAR_JSON)
+    toi = next(s for s in r["sites"] if s["domain"] == "timesofindia.indiatimes.com")
+    assert toi["known"] is True
+    assert toi["confidence"] == 0.9
+
+
+def test_find_similar_sites_requires_a_seed_domain():
+    try:
+        si.find_similar_sites("", "coffee", call_fn=lambda p, m: FIND_SIMILAR_JSON)
+        assert False, "should have raised"
+    except ValueError:
+        pass
+
+
+def test_find_similar_sites_requires_a_category():
+    try:
+        si.find_similar_sites("hindustantimes.com", "", call_fn=lambda p, m: FIND_SIMILAR_JSON)
+        assert False, "should have raised"
+    except ValueError:
+        pass

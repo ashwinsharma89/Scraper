@@ -208,12 +208,37 @@ def api_classify_category(body: Dict[str, Any], user: str = Depends(require_user
 def api_discover_sites(body: Dict[str, Any], user: str = Depends(require_user)):
     """AI-suggest real sites for a category, merged with the cross-project site
     intelligence ledger (DESIGN_01 §4b) — sites with a real, good track record are shown
-    pre-trusted; everything else is flagged for manual validation. Read-only."""
+    pre-trusted; everything else is flagged for manual validation. Read-only.
+
+    Optional `source_type_hint` (e.g. "lifestyle & food blogs", "forums") scopes the
+    search to one genre — the wizard calls this once per confirmed source type instead
+    of one blended call, so specialist/smaller sites aren't crowded out by mainstream
+    news (real feedback: a single generic call kept surfacing the same handful of big
+    outlets rather than food blogs or forums)."""
     category = (body or {}).get("category", "")
     geo_scope = (body or {}).get("geo_scope")
+    source_type_hint = (body or {}).get("source_type_hint")
     import site_intelligence
     try:
-        return site_intelligence.discover_sites(category, geo_scope=geo_scope)
+        return site_intelligence.discover_sites(category, geo_scope=geo_scope,
+                                                source_type_hint=source_type_hint)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/discovery/similar-sites")
+def api_similar_sites(body: Dict[str, Any], user: str = Depends(require_user)):
+    """"Sites like X" — asked for explicitly: confirming interest in one real site (e.g.
+    hindustantimes.com) should surface more of the same genre (toi.com, indianexpress.com,
+    ...) without re-running the whole category search. Read-only, same contract as
+    /api/discovery/sites."""
+    body = body or {}
+    seed_domain = body.get("domain", "")
+    category = body.get("category", "")
+    geo_scope = body.get("geo_scope")
+    import site_intelligence
+    try:
+        return site_intelligence.find_similar_sites(seed_domain, category, geo_scope=geo_scope)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
