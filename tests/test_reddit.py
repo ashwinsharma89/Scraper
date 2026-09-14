@@ -130,7 +130,10 @@ def test_collect_dedupes_across_new_and_top_and_fetches_comments():
             return _Resp(b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>')
         return _Resp(b"", status=404)
 
-    res = reddit.collect(_cfg(), {"top_n_comment_posts": 2}, fetch_fn=fetch)
+    # No relevance_terms here deliberately -- dedup is orthogonal to relevance
+    # filtering (covered separately below); this isolates the one concern.
+    cfg = {"relevance_terms": [], "source_plan": {"subreddits": ["malaysia"]}}
+    res = reddit.collect(cfg, {"top_n_comment_posts": 2}, fetch_fn=fetch)
     posts = [i for i in res.items if i["extra"]["type"] == "post"]
     comments = [i for i in res.items if i["extra"]["type"] == "comment"]
 
@@ -140,6 +143,39 @@ def test_collect_dedupes_across_new_and_top_and_fetches_comments():
     # Comments fetched and deleted-filtered.
     assert len(comments) == 2
     assert all(c["extra"]["depth"] == 0 for c in comments)  # RSS is flat, honestly labeled
+
+
+def test_collect_filters_out_posts_that_dont_match_relevance_terms():
+    """Real bug found live (user report: a real coffee study collected 99 Reddit
+    items, 0 judged relevant). Root cause: new.rss/top.rss are the subreddit's
+    UNSCOPED firehose -- only search.rss was ever actually query-scoped, but posts
+    from all three were merged and stored unconditionally. RSS exposes no post
+    selftext, so this checks the title only (same evidence gdelt.py's own
+    re-validation uses)."""
+    def fetch(url):
+        if "new.rss" in url or "top.rss" in url or "search.rss" in url:
+            return _Resp(LISTING_XML)
+        return _Resp(b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>')
+
+    res = reddit.collect(_cfg(), {"top_n_comment_posts": 0}, fetch_fn=fetch)  # _cfg() -> relevance_terms=["Maggi"]
+    posts = [i for i in res.items if i["extra"]["type"] == "post"]
+    assert [p["title"] for p in posts] == ["Maggi price hike noticed at Tesco"]
+    assert res.diagnostics.get("irrelevant_posts_dropped") == 1
+
+
+def test_collect_keeps_everything_when_no_relevance_terms_configured():
+    """Matches news.py's/gdelt.py's identical convention: no terms configured means
+    nothing to filter against, so nothing is dropped -- not an aggressive default."""
+    def fetch(url):
+        if "new.rss" in url:
+            return _Resp(LISTING_XML)
+        return _Resp(b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>')
+
+    cfg = {"relevance_terms": [], "source_plan": {"subreddits": ["malaysia"]}}
+    res = reddit.collect(cfg, {"top_n_comment_posts": 0}, fetch_fn=fetch)
+    posts = [i for i in res.items if i["extra"]["type"] == "post"]
+    assert len(posts) == 2
+    assert "irrelevant_posts_dropped" not in res.diagnostics
 
 
 def test_collect_requires_subreddits():
@@ -177,5 +213,8 @@ def test_collect_comment_fetch_429_is_logged_not_fatal():
 
     res = reddit.collect(_cfg(), {"top_n_comment_posts": 5}, fetch_fn=fetch)
     posts = [i for i in res.items if i["extra"]["type"] == "post"]
-    assert len(posts) == 2  # listings still succeeded
+    # 1, not 2: the "Unrelated weather post" fixture entry is correctly filtered out
+    # by _cfg()'s relevance_terms=["Maggi"] -- this test's own concern (comment-fetch
+    # 429 handling) still exercises fully with the one relevant post that remains.
+    assert len(posts) == 1
     assert any("429" in e or "rate-limited" in e for e in res.errors)

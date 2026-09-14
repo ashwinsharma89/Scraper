@@ -29,6 +29,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote_plus
 
+from scrapers import relevance
 from scrapers.base import ScrapeResult, relevance_terms
 
 CHANNEL = "reddit"
@@ -200,6 +201,24 @@ def collect(cfg: Dict[str, Any], params: Optional[Dict[str, Any]] = None,
             except Exception as exc:
                 # Graceful: keep whatever we already have, log the failure.
                 result.error(f"Reddit listing failed (r/{sub}, {url.split('/')[-1][:40]}): {exc}")
+
+    # Real bug found live (user report: 0/99 relevant against a real coffee study):
+    # new.rss and top.rss are the subreddit's UNSCOPED firehose — every post in the
+    # subreddit, nothing to do with relevance_terms. Only search.rss was ever actually
+    # query-scoped, but posts from all three URLs were merged into posts_by_id and
+    # stored unconditionally, so two-thirds of Reddit's collection had zero relevance
+    # filtering at all (unlike news.py's OR-filter or gdelt.py's title re-validation —
+    # Reddit was the one channel with none). RSS exposes no post selftext, so this
+    # checks the title only, same evidence GDELT's own re-validation uses. No terms
+    # configured -> nothing to filter against, so everything is kept (matching news.py/
+    # gdelt.py's identical convention for that case).
+    if terms:
+        before = len(posts_by_id)
+        posts_by_id = {pid: p for pid, p in posts_by_id.items()
+                       if relevance.contains_any_term(p["title"], terms)}
+        dropped = before - len(posts_by_id)
+        if dropped:
+            result.diagnostics["irrelevant_posts_dropped"] = dropped
 
     for post in posts_by_id.values():
         result.add(

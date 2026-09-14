@@ -295,6 +295,32 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   correctly reported "Date window filter: dropped 6 item(s)...", and every one of
   the 71 items actually stored was confirmed (via a direct API query of all stored
   rows) to genuinely be dated 2026 — zero leakage.
+- **Real bug found + fixed (user report): Reddit had ZERO relevance filtering on
+  two of its three listing feeds.** A real coffee study collected 99 Reddit items,
+  0 judged relevant by a broad manual check. Root cause (`scrapers/reddit.py`):
+  `collect()` fetches three feeds per subreddit — `new.rss`, `top.rss`, and (only
+  when `relevance_terms` produce a query) `search.rss` — but merged ALL THREE into
+  `posts_by_id` and stored everything unconditionally. Only `search.rss` was ever
+  actually query-scoped; `new.rss`/`top.rss` are the subreddit's raw, unscoped
+  firehose. Unlike News (OR-filter + relevance validation) or GDELT (title
+  re-validation against GDELT's own loose server-side matching), Reddit was the one
+  channel with no relevance check on most of what it stored. Fixed: after
+  collecting, posts are filtered by `relevance.contains_any_term(title, terms)`
+  (title only — RSS exposes no post selftext) when `relevance_terms` is
+  configured; empty `relevance_terms` keeps everything, matching news.py/gdelt.py's
+  identical convention. Dropped count honestly reported via
+  `result.diagnostics["irrelevant_posts_dropped"]`. Comments are deliberately left
+  unfiltered at the body level — comment fetching only ever happens for posts that
+  already passed the (now real) relevance check, and a comment replying on-topic
+  doesn't have to repeat the keyword itself, so filtering it too would risk losing
+  real discussion for no precision gain. 2 new tests + 2 existing tests' assertions
+  corrected (they were unknowingly asserting the OLD, unfiltered behavior — their
+  own fixture even had a post literally titled "Unrelated weather post" for this
+  exact reason). Live-verified against real Reddit RSS, both directions: r/singapore
+  with `relevance_terms=["coffee"]` correctly dropped all 50 real posts (none
+  mentioned coffee — matches the user's reported symptom exactly); r/coffee with the
+  same term correctly kept 43 of 66 genuinely coffee-titled posts and dropped 23
+  off-topic ones (proving the filter isn't over-aggressive either).
 - **Suggested-RSS-feeds baked into the wizard** (HANDOFF §7 item 1) — the same
   ✨ Suggest sources → validate → confirm flow (extracted into
   `frontend/src/components/SuggestSourcesPanel.jsx`, shared with Source plan) now runs
