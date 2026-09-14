@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react'
-import { Database, FileCheck2, FileClock, Gauge, Languages } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Database, FileCheck2, FileClock, Gauge, Languages, Settings2, Trash2 } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useJobs } from '../state/JobsState.jsx'
+import { useToast } from '../components/Toast.jsx'
 import { Card, HelpBox, Skeleton, Stat } from '../components/Ui.jsx'
+import ConfirmDeleteModal from '../components/ConfirmDeleteModal.jsx'
+import EditSettingsModal from '../wizards/EditSettingsModal.jsx'
 
 export default function Overview() {
-  const { projectId, project } = useAppState()
+  const { projectId, project, loadProjects } = useAppState()
   const { jobs } = useJobs()
   const [dash, setDash] = useState(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const toast = useToast()
+  const navigate = useNavigate()
 
   useEffect(() => {
     if (!projectId) return
@@ -19,11 +27,27 @@ export default function Overview() {
   const cfg = project.config
   const seg = cfg.source_plan?.segments || {}
 
+  async function handleDelete() {
+    try {
+      await api(`/api/projects/${projectId}?confirm=DELETE`, { method: 'DELETE' })
+      toast(`"${project.name}" deleted.`)
+      setDeleteOpen(false)
+      await loadProjects()
+      navigate('/overview')
+    } catch (e) {
+      toast(e.message, true)
+    }
+  }
+
   return (
     <>
       <HelpBox view="overview" />
       <Card title={project.name}
-        headExtra={<a href={`/api/projects/${projectId}/config.yaml`} target="_blank" rel="noreferrer" className="muted">config.yaml ↗</a>}>
+        headExtra={<div className="actions">
+          <a href={`/api/projects/${projectId}/config.yaml`} target="_blank" rel="noreferrer" className="muted">config.yaml ↗</a>
+          <button className="ghost" onClick={() => setEditOpen(true)}><Settings2 size={14} /> Edit settings</button>
+          <button className="danger" onClick={() => setDeleteOpen(true)}><Trash2 size={14} /> Delete study</button>
+        </div>}>
         <div className="grid">
           <Stat lbl="Brand" num={cfg.product.brand || '— (category-only study)'} />
           <Stat lbl="Market" num={`${cfg.market.country} (${cfg.market.country_code || '?'})`} />
@@ -53,6 +77,14 @@ export default function Overview() {
           ))}
         </div>
       </Card>
+
+      {editOpen && (
+        <EditSettingsModal project={project} onClose={() => setEditOpen(false)}
+          onSaved={() => window.location.reload()} />
+      )}
+      {deleteOpen && (
+        <ConfirmDeleteModal projectName={project.name} onClose={() => setDeleteOpen(false)} onConfirm={handleDelete} />
+      )}
     </>
   )
 }

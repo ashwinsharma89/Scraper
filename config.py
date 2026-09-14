@@ -7,6 +7,7 @@ intake the user provides; the wizard turns that intake into an editable ``config
 """
 from __future__ import annotations
 
+import copy
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
@@ -603,6 +604,136 @@ def run_wizard(intake: Dict[str, Any]) -> Dict[str, Any]:
         },
     }
     return config
+
+
+def _merge_preserving_order(existing: List[str], newly_derived: List[str]) -> List[str]:
+    """Union two string lists, deduped case-insensitively, keeping every existing entry
+    (in its original order/casing) and appending only genuinely new ones. Used by
+    update_settings() below so re-deriving a field from edited market/product/
+    competitors never silently discards something the user (or another AI-assist
+    feature) already added on top of the mechanical default."""
+    seen = {t.lower() for t in existing if t}
+    out = list(existing)
+    for t in newly_derived:
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return out
+
+
+def update_settings(config: Dict[str, Any], market: Dict[str, Any], product: Dict[str, Any],
+                    competitors: List[str]) -> Dict[str, Any]:
+    """Re-derive a study's market/product/competitor-dependent fields after the study
+    already exists (HANDOFF §7 item 3: "today the market is only set at wizard time").
+
+    Unlike run_wizard() (which builds an entire config from a blank intake), this
+    function starts from the project's CURRENT config and only touches fields that are
+    pure functions of market/product/competitors:
+      - market.country/country_code/gdelt_country/languages/cctld: overwritten (these
+        ARE the edited fields).
+      - market.market_terms, source_plan.subreddits, relevance_terms: MERGED (union),
+        never replaced — the user or another AI-assist feature (term expansion, outlet
+        discovery) may have added real entries on top of the mechanical default, and
+        an edit here must not silently erase that. Known, accepted trade-off (found
+        live testing this function): editing the country to X and then back to the
+        original leaves X's derived terms/subreddits behind too, since nothing here
+        can distinguish "mechanically derived, now stale" from "user-added, keep
+        forever" — an honest limitation of merge-only semantics, not a bug to chase;
+        stale entries are harmless noise (an extra market_term or subreddit candidate),
+        not silently wrong output, and are easy to remove by hand in Source plan.
+      - product/competitors: overwritten outright (these ARE the edited fields; unlike
+        market_terms/subreddits, nothing else contributes to this list, so a real
+        removal here is a deliberate, expected edit, not accidental data loss).
+      - source_plan.google_news_feeds/bing_news_feeds/gdelt/youtube/google_business/
+        segments/forum_next_labels/manual_intelligence_platforms: fully recomputed,
+        same formulas run_wizard() uses at creation time.
+      - Every user-filled source_plan field with NO mechanical counterpart (rss_feeds,
+        ecommerce_urls, ecommerce_search, ecommerce_keywords, forum_urls, quora_topics)
+        and every existing language's keyword structures: left completely untouched.
+        A newly added language gets fresh EMPTY keyword slots (matching run_wizard()'s
+        own rule that only the study's original primary language is ever seeded from
+        intake — never a second real brand-name guess for a language nobody entered
+        terms for).
+    """
+    new_config = copy.deepcopy(config)
+    old_market = new_config.get("market", {})
+
+    country_info = resolve_country(market.get("country", ""))
+    iso = country_info.get("iso", "")
+    languages = [l for l in (market.get("languages") or []) if l] or ["en"]
+
+    brand = (product.get("brand") or "").strip()
+    parent = (product.get("parent_company") or "").strip()
+    category = (product.get("category") or "").strip()
+    category_type = product.get("category_type", "other")
+    if category_type not in CATEGORY_TYPES:
+        category_type = "other"
+    competitors = [c for c in competitors if c]
+
+    # A geo_scope naming a state/region/city is only meaningful under the country it was
+    # resolved against — if the country itself changed under this edit, that sub-scope
+    # is now stale and must be dropped rather than silently kept pointing at the old
+    # country (a fresh, more precise geo_scope isn't collected by this form; the user
+    # can re-run the wizard's geo-scope step for that).
+    geo_scope = old_market.get("geo_scope")
+    country_changed = (old_market.get("country") or "").strip().lower() != (market.get("country") or "").strip().lower()
+    if geo_scope and country_changed:
+        geo_scope = None
+
+    derived_market_terms = [t for t in (
+        [country_info.get("name", ""), country_info.get("demonym", "")]
+        + [country_info.get("native_names", {}).get(l, "") for l in languages]
+        + ([geo_scope.get("value", "")] if geo_scope and geo_scope.get("level") != "country" else [])
+    ) if t]
+    market_terms = _merge_preserving_order(old_market.get("market_terms", []), derived_market_terms)
+
+    new_market = {
+        **old_market,
+        "country": country_info["name"],
+        "country_code": iso,
+        "gdelt_country": country_info.get("gdelt", ""),
+        "languages": languages,
+        "market_terms": market_terms,
+        "cctld": f".{iso.lower()}" if iso else "",
+    }
+    if geo_scope:
+        new_market["geo_scope"] = geo_scope
+    else:
+        new_market.pop("geo_scope", None)
+    new_config["market"] = new_market
+
+    new_config["product"] = {
+        "brand": brand, "parent_company": parent, "category": category, "category_type": category_type,
+    }
+    new_config["competitors"] = competitors
+
+    derived_relevance = derive_relevance_terms(brand, competitors, category)
+    new_config["relevance_terms"] = _merge_preserving_order(
+        new_config.get("relevance_terms", []), derived_relevance)
+
+    # Existing languages' keyword structures may already be hand-edited in Source
+    # plan — preserved untouched. A language newly added by this edit gets empty
+    # slots only (never a guessed brand/category seed for terms nobody typed).
+    by_language = dict(new_config.get("keywords", {}).get("by_language", {}))
+    empty_slots = {"brand": [], "brand_price": [], "category_generic": [], "brand_complaint": []}
+    for lang in languages:
+        if lang not in by_language:
+            by_language[lang] = dict(empty_slots)
+    new_config.setdefault("keywords", {})["by_language"] = by_language
+
+    sp = dict(new_config.get("source_plan", {}))
+    sp["gdelt"] = {"sourcecountry": country_info.get("gdelt", ""),
+                  "needs_confirmation": country_info.get("needs_confirmation", "false")}
+    sp["subreddits"] = _merge_preserving_order(sp.get("subreddits", []),
+                                               suggest_subreddits(country_info["name"], category_type))
+    sp["youtube"] = {"region_code": iso, "relevance_language": languages[0] if languages else "en"}
+    sp["google_business"] = {"query": f"{brand} {country_info['name']}".strip() if brand else ""}
+    sp["segments"] = segment_applicability(category_type)
+    sp["forum_next_labels"] = {l: FORUM_NEXT_LABELS.get(l, FORUM_NEXT_LABELS["en"]) for l in languages}
+    sp["manual_intelligence_platforms"] = _manual_platforms(category_type)
+    new_config["source_plan"] = sp
+
+    return regenerate_news_feeds(new_config)
 
 
 def _manual_platforms(category_type: str) -> List[Dict[str, Any]]:

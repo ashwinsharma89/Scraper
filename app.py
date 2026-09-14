@@ -363,18 +363,11 @@ def api_launch_study(body: Dict[str, Any], user: str = Depends(require_user)):
             "run_daily_requested": run_daily}  # daily scheduling itself: not wired yet, see §9
 
 
-@app.post("/api/projects/wizard")
-def api_wizard(intake: Dict[str, Any], user: str = Depends(require_user)):
-    # A study needs at least one anchor to generate keywords/relevance terms from — brand
-    # OR category — but neither is hard-required on its own. This is what lets a
-    # category-only study (e.g. "instant noodles in Malaysia", no single target brand) work.
-    product = intake.get("product", {}) or {}
-    if not (product.get("brand") or "").strip() and not (product.get("category") or "").strip():
-        raise HTTPException(status_code=400,
-                             detail="Provide a brand name, a product category, or both.")
-    market = intake.get("market") or {}
-    intake["market"] = market
-
+def _validate_and_normalize_market(market: Dict[str, Any]) -> None:
+    """Shared by api_wizard and api_update_settings: validates + normalizes a `market`
+    dict in place (geo_scope shape, single-country guard, non-empty country). Factored
+    out so editing settings post-creation enforces the exact same invariants the wizard
+    does at creation time, rather than a second, driftable copy of the same checks."""
     # Optional, additive: a hierarchical geo-scope (country/state/region/city) per
     # DESIGN_01_category-discovery.md §3, superseding the single-country-only framing with a
     # variable-granularity one. Absent geo_scope -> behavior is IDENTICAL to before this was
@@ -416,6 +409,20 @@ def api_wizard(intake: Dict[str, Any], user: str = Depends(require_user)):
         market["country"] = country_val[0]
     if not (market.get("country") or "").strip():
         raise HTTPException(status_code=400, detail="Country/region is required.")
+
+
+@app.post("/api/projects/wizard")
+def api_wizard(intake: Dict[str, Any], user: str = Depends(require_user)):
+    # A study needs at least one anchor to generate keywords/relevance terms from — brand
+    # OR category — but neither is hard-required on its own. This is what lets a
+    # category-only study (e.g. "instant noodles in Malaysia", no single target brand) work.
+    product = intake.get("product", {}) or {}
+    if not (product.get("brand") or "").strip() and not (product.get("category") or "").strip():
+        raise HTTPException(status_code=400,
+                             detail="Provide a brand name, a product category, or both.")
+    market = intake.get("market") or {}
+    intake["market"] = market
+    _validate_and_normalize_market(market)
     cfg = config_mod.run_wizard(intake)
     name = intake.get("name") or cfg["product"]["brand"] or cfg["product"]["category"] or "Untitled study"
     pid = storage.create_project(name, cfg)
@@ -436,6 +443,36 @@ def api_update_config(pid: int, body: Dict[str, Any], user: str = Depends(requir
     storage.update_project_config(pid, cfg, name)
     storage.audit("project.update", "config edited", acting_user=user, project_id=pid)
     return {"ok": True}
+
+
+@app.post("/api/projects/{pid}/update-settings")
+def api_update_settings(pid: int, body: Dict[str, Any], user: str = Depends(require_user)):
+    """Change a study's market/brand/competitors after creation and regenerate the
+    market/product-dependent parts of the source plan in place (HANDOFF §7 item 3:
+    "today the market is only set at wizard time"). Every user-filled source_plan URL
+    list and every existing language's keyword structures are preserved untouched —
+    see config.update_settings()'s docstring for exactly what is/isn't recomputed."""
+    project = _project_or_404(pid)
+    body = body or {}
+    product = body.get("product") or {}
+    if not (product.get("brand") or "").strip() and not (product.get("category") or "").strip():
+        raise HTTPException(status_code=400,
+                             detail="Provide a brand name, a product category, or both.")
+    market = body.get("market") or {}
+    _validate_and_normalize_market(market)
+    competitors = [c for c in (body.get("competitors") or []) if c]
+
+    new_cfg = config_mod.update_settings(project["config"], market, product, competitors)
+    name = body.get("name") or project["name"]
+    storage.update_project_config(pid, new_cfg, name)
+    storage.audit("project.update", "settings edited (market/brand/competitors)",
+                 acting_user=user, project_id=pid)
+    return {
+        "ok": True,
+        "config": new_cfg,
+        "google_news_feeds": len(new_cfg["source_plan"]["google_news_feeds"]),
+        "bing_news_feeds": len(new_cfg["source_plan"]["bing_news_feeds"]),
+    }
 
 
 @app.post("/api/projects/{pid}/regenerate-feeds")

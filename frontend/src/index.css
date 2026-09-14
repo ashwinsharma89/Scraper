@@ -82,6 +82,8 @@ button.ghost {
   box-shadow: var(--shadow-sm);
 }
 button.ghost:hover { background: var(--surface-2); border-color: #d6dced; color: var(--ink); }
+button.danger { background: var(--bad); color: #fff; }
+button.danger:hover { background: #b91c1c; }
 button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
 input, select, textarea {

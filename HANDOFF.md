@@ -214,6 +214,36 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   noodles" (not "Untitled study"), derived `relevance_terms: ["Indomie","instant","noodles"]`,
   generated real working Google+Bing News RSS URLs from the category term, and correctly
   left `google_business.query` empty (no named entity to search for a business listing).
+- **DESIGN_01 category-discovery rollout complete (increments 1-9)**, including the final
+  generalization increment (#9): tested skincare/Brazil and electric scooters/Vietnam
+  end-to-end through the real, live pipeline (not mocked), finding and fixing 4 real bugs
+  the narrower coffee/India pilot never exercised — all in `source_type_mapping.py`/
+  `sitemap_discovery.py`, all live-verified before/after, all with regression tests. See
+  git log ("Increment 9: fix 4 real bugs...") for full detail; throwaway verification
+  projects/ledger rows cleaned up afterward.
+- **Edit-study-settings form** (`frontend/src/wizards/EditSettingsModal.jsx` +
+  `config.update_settings()` + `POST /api/projects/{id}/update-settings`) — change
+  market/brand/competitors after a study is already created, not just at wizard time.
+  Recomputes only the fields that are pure functions of market/product/competitors
+  (feeds, gdelt/youtube/google_business templates, segments); every hand-filled
+  source_plan URL list and every existing language's keyword structures are preserved
+  untouched; `market_terms`/`subreddits`/`relevance_terms` are merged (union), never
+  replaced, so a real AI-assist addition on top of the mechanical default is never
+  silently erased. Known, accepted trade-off: switching a field back and forth leaves
+  the intermediate value's derived terms/subreddits behind too (harmless noise, easy to
+  remove by hand) — see `config.update_settings()`'s docstring. Live-verified end-to-end
+  in the browser (changed the demo project's country live, confirmed feeds/gdelt
+  recomputed correctly, then reverted and re-seeded to undo the resulting market_terms
+  drift this trade-off causes).
+- **Delete-study button** (`frontend/src/components/ConfirmDeleteModal.jsx`) — the
+  existing `DELETE /api/projects/{id}?confirm=DELETE` backend now has a UI: type the
+  exact study name to enable the confirm button (a plain Yes/No felt too weak for a
+  genuinely irreversible purge of every item/run/audit row). Live-verified: created a
+  throwaway project, deleted it through the modal, confirmed via direct API call it was
+  gone and the UI correctly fell back to the remaining project.
+- **One-click "add all validated" button** (Source plan → ✨ Suggested sources) — bulk-
+  accepts every `valid !== false` News RSS + e-commerce candidate straight into the
+  source plan, skipping the per-row checkbox review for when the suggestion list is long.
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
@@ -295,22 +325,18 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 ## 7. PENDING / SUGGESTED NEXT WORK (pick up here)
 
 Offered to the user but not yet built (in rough priority order):
-1. **"Add all validated e-commerce + RSS" one-click button** in the Suggest-sources panel.
-2. **Suggested-RSS-feeds baked into the wizard** per country (still user-confirmed via health check).
-3. **Edit-study-settings form** (change market/brand/competitors and regenerate the source
-   plan in place — today the market is only set at wizard time).
-4. **Delete-study button** in the UI (backend `DELETE /api/projects/{id}?confirm=DELETE` exists).
-5. **"target brand only" export filter** (drop `brand_focus=unrelated` rows) — partially
+1. **Suggested-RSS-feeds baked into the wizard** per country (still user-confirmed via health check).
+2. **"target brand only" export filter** (drop `brand_focus=unrelated` rows) — partially
    superseded now: headline aggregates already exclude `unrelated` by default (§5.3); this
    would just add an explicit toggle for the raw data tabs too.
-6. **Auto-suggest city/region market terms** to further reduce market-filter over-drop
+3. **Auto-suggest city/region market terms** to further reduce market-filter over-drop
    (demonyms are now automatic — §5.2 — but city/region-level terms still require the user
    to add them manually in Source plan, or come via ✨ Suggest sources).
-7. **PDF report export**; **per-tab description headers** in the Excel (self-documenting).
-8. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set.
-9. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
+4. **PDF report export**; **per-tab description headers** in the Excel (self-documenting).
+5. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set.
+6. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
    (currently API + Excel Confidence tab only, no dedicated frontend chart yet).
-10. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
+7. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
     this sandbox again and confirmed the 429 is IP-level, not app-level: plain `curl` (no
     pytrends, no cookies) against `trends.google.com/trends/api/explore` returns 429 directly,
     while `trends.google.com/trends/` (homepage) returns 200 — so it's specifically this

@@ -473,6 +473,66 @@ def test_purge_requires_confirmation(client, monkeypatch):
     assert storage.get_project(pid) is None
 
 
+def test_update_settings_endpoint_changes_market_and_regenerates_feeds(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+
+    r = client.post(f"/api/projects/{pid}/update-settings", json={
+        "market": {"country": "Malaysia", "languages": ["en"]},
+        "product": {"brand": "Acme Cola", "category": "cola", "category_type": "fmcg_food"},
+        "competitors": ["Fizzly", "New Rival"],
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["config"]["market"]["country_code"] == "MY"
+    assert body["config"]["competitors"] == ["Fizzly", "New Rival"]
+    # Persisted, not just returned.
+    stored = storage.get_project(pid)
+    assert stored["config"]["market"]["country"] == "Malaysia"
+
+
+def test_update_settings_endpoint_rejects_neither_brand_nor_category(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+
+    r = client.post(f"/api/projects/{pid}/update-settings", json={
+        "market": {"country": "Malaysia", "languages": ["en"]},
+        "product": {"brand": "", "category": "", "category_type": "fmcg_food"},
+        "competitors": [],
+    })
+    assert r.status_code == 400
+
+
+def test_update_settings_endpoint_preserves_manually_added_source_plan_urls(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+
+    cfg = storage.get_project(pid)["config"]
+    cfg["source_plan"]["rss_feeds"] = ["https://example.com/feed.xml"]
+    storage.update_project_config(pid, cfg, None)
+
+    r = client.post(f"/api/projects/{pid}/update-settings", json={
+        "market": {"country": "Malaysia", "languages": ["en"]},
+        "product": {"brand": "Acme Cola", "category": "cola", "category_type": "fmcg_food"},
+        "competitors": ["Fizzly"],
+    })
+    assert r.status_code == 200
+    assert r.json()["config"]["source_plan"]["rss_feeds"] == ["https://example.com/feed.xml"]
+
+
+def test_update_settings_endpoint_404s_on_unknown_project(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/999/update-settings", json={
+        "market": {"country": "Malaysia", "languages": ["en"]},
+        "product": {"brand": "X", "category": "", "category_type": "other"},
+        "competitors": [],
+    })
+    assert r.status_code == 404
+
+
 def test_suggest_languages_endpoint(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     import language_suggestion

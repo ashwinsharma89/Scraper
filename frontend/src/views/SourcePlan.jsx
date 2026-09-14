@@ -121,6 +121,31 @@ export default function SourcePlan() {
     }
   }
 
+  // HANDOFF §7 item 1: a one-click bulk-accept for the two channels that come back
+  // pre-validated (news_rss's feed-health check, ecommerce's reachability check) —
+  // skips the per-row review entirely instead of relying on the checkbox defaults,
+  // for when the suggestion list is long and the user just wants the safe subset in.
+  async function addAllValidated() {
+    if (!suggestResults) return
+    const newCfg = structuredClone(cfg)
+    let added = 0
+    const bulkAdd = (key, values) => {
+      const cur = newCfg.source_plan[key] || []
+      for (const v of values) { if (!cur.includes(v)) { cur.push(v); added += 1 } }
+      newCfg.source_plan[key] = cur
+    }
+    bulkAdd('rss_feeds', (suggestResults.news_rss || []).filter((c) => c.valid !== false).map((c) => c.url))
+    bulkAdd('ecommerce_urls', (suggestResults.ecommerce || []).filter((c) => c.valid !== false).map((c) => c.url))
+    if (added === 0) { toast('No validated RSS/e-commerce candidates to add', true); return }
+    try {
+      await api(`/api/projects/${projectId}/config`, { method: 'PUT', body: { config: newCfg } })
+      toast(`Added ${added} validated RSS + e-commerce source(s)`)
+      window.location.reload()
+    } catch (e) {
+      toast(e.message, true)
+    }
+  }
+
   async function doExpandTerm() {
     const term = expandTerm.trim()
     if (!term) { toast('Enter a term to expand', true); return }
@@ -196,7 +221,8 @@ export default function SourcePlan() {
         </div>}>
 
         {suggestResults && (
-          <SuggestResults s={suggestResults} checked={checkedSugg} setChecked={setCheckedSugg} onApply={addSelectedSources} />
+          <SuggestResults s={suggestResults} checked={checkedSugg} setChecked={setCheckedSugg}
+            onApply={addSelectedSources} onApplyAllValidated={addAllValidated} />
         )}
 
         <div className="note">🌏 <b>Market filter</b> — news items must show a signal they're in{' '}
@@ -320,7 +346,7 @@ function FeedTable({ feeds }) {
   )
 }
 
-function SuggestResults({ s, checked, setChecked, onApply }) {
+function SuggestResults({ s, checked, setChecked, onApply, onApplyAllValidated }) {
   const toggle = (k) => setChecked((prev) => ({ ...prev, [k]: !prev[k] }))
   const Row = ({ chan, value, label, valid, note, why }) => {
     const key = `${chan}|${value}`
@@ -341,7 +367,12 @@ function SuggestResults({ s, checked, setChecked, onApply }) {
   const summary = s._summary || {}
   return (
     <div className="card" style={{ borderColor: 'var(--primary)' }}>
-      <div className="card-head"><h2>✨ Suggested sources</h2><button onClick={onApply}>Add checked to source plan</button></div>
+      <div className="card-head"><h2>✨ Suggested sources</h2>
+        <div className="actions" style={{ marginTop: 0 }}>
+          <button className="ghost" onClick={onApplyAllValidated}>✓ Add all validated (RSS + e-commerce)</button>
+          <button onClick={onApply}>Add checked to source plan</button>
+        </div>
+      </div>
       <p className="muted">AI-proposed candidates, each validated by the tool. Uncheck any you don't want.
         App-only quick-commerce/social platforms are shown as documented gaps, not scrapers.</p>
       {!!s.news_rss?.length && <><h3>News RSS feeds — {summary.news_rss || 0}</h3>
