@@ -434,6 +434,63 @@ def test_report_download_endpoint_serves_pdf(client, monkeypatch):
     assert r2.content.startswith(b"%PDF-")
 
 
+def test_suggest_source_types_for_project_calls_source_type_mapping(client, monkeypatch):
+    """HANDOFF §7 item 4 retrofit: category-discovery source-type suggestion, made
+    reachable for an EXISTING project (previously only reachable via the AI-guided
+    wizard at project-creation time)."""
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+
+    import source_type_mapping
+    captured = {}
+
+    def fake_suggest(category, geo_scope=None, **kw):
+        captured["category"] = category
+        captured["geo_scope"] = geo_scope
+        return {"source_types": [{"name": "café/venue listing sites", "strategy": "generic_site_discovery",
+                                   "channel": None}], "_summary": {"total": 1}}
+
+    monkeypatch.setattr(source_type_mapping, "suggest_source_types", fake_suggest)
+    r2 = client.post(f"/api/projects/{pid}/suggest-source-types")
+    assert r2.status_code == 200
+    assert r2.json()["source_types"][0]["name"] == "café/venue listing sites"
+    assert captured["category"] == "cola"
+    # No explicit geo_scope was set on this plain-wizard project -- a synthetic
+    # country-level one must still be derived, not left None.
+    assert captured["geo_scope"] == {"level": "country", "value": "Singapore", "country": "Singapore"}
+
+
+def test_suggest_source_types_for_project_404s_without_a_category(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    intake = _intake()
+    intake["product"]["category"] = ""
+    r = client.post("/api/projects/wizard", json=intake)
+    pid = r.json()["id"]
+    r2 = client.post(f"/api/projects/{pid}/suggest-source-types")
+    assert r2.status_code == 400
+
+
+def test_discover_sites_for_project_calls_site_intelligence(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+
+    import site_intelligence
+    captured = {}
+
+    def fake_discover(category, geo_scope=None, source_type_hint=None, **kw):
+        captured["source_type_hint"] = source_type_hint
+        return {"sites": [{"domain": "example.com", "name": "Example"}], "_summary": {"total": 1}}
+
+    monkeypatch.setattr(site_intelligence, "discover_sites", fake_discover)
+    r2 = client.post(f"/api/projects/{pid}/discover-sites-for-type",
+                     json={"source_type_hint": "café/venue listing sites"})
+    assert r2.status_code == 200
+    assert r2.json()["sites"][0]["domain"] == "example.com"
+    assert captured["source_type_hint"] == "café/venue listing sites"
+
+
 def test_suggest_market_terms_calls_geo_discovery_module(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     r = client.post("/api/projects/wizard", json=_intake())

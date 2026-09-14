@@ -358,6 +358,60 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   passed. Live-verified against the real demo project via a direct apply-terms API
   call: confirmed `relevance_terms` picked up the new variant/brand strings
   immediately, then reset via `seed_demo.py`.
+- **Category-discovery pipeline retrofitted onto EXISTING projects** (user report:
+  "why doesn't [coffee/India] trigger a search from India's top food and lifestyle
+  websites and blogs, top cafes, coffee brands"). Root cause: MarketLens already has
+  the exact mechanism for this — Layer 1 (`source_type_mapping.py`) asks Claude for
+  real, category-specific source TYPES ("café/venue listing sites," "coffee brand
+  blogs," literally that phrasing), Layer 2 (`site_intelligence.py` +
+  `discovery_pipeline.py`) does real sitemap-crawling + keyword-matched page
+  discovery for each — but it only ever ran once, through the AI-guided study
+  wizard, at project creation. A project created through the plain wizard (or one
+  that skipped source-type-specific discovery in the AI-guided flow) had no way to
+  reach it afterward. Retrofitted as three new pieces:
+  - `jobs.run_collection()` gained a `channel == "generic_site"` branch: this
+    channel isn't in `scrapers._REGISTRY` (it needs `category`/`seed_domains`, not a
+    plain `collect(cfg, params)` call) and manages its own run row internally via
+    `discovery_pipeline.run_source_type_job()`, so it branches out BEFORE the
+    generic `start_run`/`get_scraper`/`save_items`/`finish_run` flow, which would
+    otherwise create a second, unused run row. `run_source_type_job()` also gained
+    `progress_cb` support (called as each domain finishes — domains run
+    concurrently, so progress advances out of submission order) and now returns
+    `returned`/`new`/`duplicate` at the top level (previously computed internally
+    for `finish_run()` but never exposed to the caller) so its job summary matches
+    every other channel's shape in the Collect tab's job table.
+  - Two new project-scoped endpoints reusing the wizard's existing, already-tested
+    modules unchanged: `POST /api/projects/{id}/suggest-source-types`
+    (`source_type_mapping.suggest_source_types`) and
+    `POST /api/projects/{id}/discover-sites-for-type`
+    (`site_intelligence.discover_sites`, one genre at a time — same reason the
+    wizard does this per-genre, not blended: a single call keeps surfacing the same
+    mainstream outlets over specialist sites). Both derive `geo_scope` from the
+    project's `market.geo_scope` when set, else synthesize a country-level one from
+    `market.country` (a plain-wizard project never collects a real `geo_scope` at
+    all). Confirming selected sites reuses the existing generic
+    `POST /api/discovery/confirm-sites` (category+domains, no `pid` needed);
+    launching collection reuses the existing
+    `POST /api/projects/{id}/collect` with `channel: "generic_site"`.
+  - Source plan gained a "✨ Discover source types + real sites (AI)" card: suggest
+    types → per-type "Find real sites" (results merge via the SAME `mergeSites()`
+    helper the Discovery Wizard's own steps use, imported directly rather than
+    duplicated) → checkbox-confirm → "Collect from N checked site(s)," which starts
+    a normal, trackable job (shows up in Collect's Recent Jobs with live progress,
+    same as every other channel now that `progress_cb` is wired through).
+
+  9 new tests. Full suite: 394 passed. Live-verified end-to-end against a real
+  India/coffee project: `suggest-source-types` returned genuine, specific types
+  including "Cafe/restaurant review aggregators (Zomato, Dineout)" and "Indian food
+  & lifestyle blogs" — exactly what the user asked for; `discover-sites-for-type`
+  found real domains (Zomato, Dineout, Google Maps, Swiggy Dining, Justdial,
+  TripAdvisor, Burpple); confirming 2 and launching collection produced a real,
+  trackable job with live progress ("Site: tripadvisor.in", 2/2) and an honest
+  `sites_reachable: 2, raw_sitemap_urls: 0` result — independently confirmed via
+  direct curl that `justdial.com/sitemap.xml` 403s and `tripadvisor.in/sitemap.xml`
+  redirects, i.e. a genuine site limitation, correctly reported rather than
+  fabricated. Throwaway project + its `site_intelligence` ledger rows cleaned up
+  afterward.
 - **Suggested-RSS-feeds baked into the wizard** (HANDOFF §7 item 1) — the same
   ✨ Suggest sources → validate → confirm flow (extracted into
   `frontend/src/components/SuggestSourcesPanel.jsx`, shared with Source plan) now runs

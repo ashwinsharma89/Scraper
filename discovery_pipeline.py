@@ -233,6 +233,7 @@ def run_source_type_job(
     probe_fn: Optional[Callable[[str], Dict[str, Any]]] = None,
     sitemap_fetch_fn: Optional[Callable[[str], Any]] = None,
     page_fetch_fn: Optional[Callable[[str], Any]] = None,
+    progress_cb: Optional[Callable[[int, int, str], None]] = None,
 ) -> Dict[str, Any]:
     """Increment 6's production mechanism: real run tracking, concurrent domain
     processing, checkpointed resumability, and real item persistence.
@@ -246,6 +247,11 @@ def run_source_type_job(
     row, real persisted items, and the source_health circuit breaker are all
     project-scoped by nature — this function IS the "wire it into a real project"
     mechanism, not an ad-hoc exploration tool.
+
+    progress_cb(current, total, label) — called as each domain FINISHES (domains run
+    concurrently, so "current" advances out of submission order — matches how
+    as_completed() naturally yields). Same optional, purely-additive contract as
+    scrapers/news.py's/gdelt.py's progress_cb (see jobs.py's run_collection()).
     """
     from source_discovery import _probe
     from http_client import get_domain_concurrency_limiter
@@ -276,11 +282,15 @@ def run_source_type_job(
                                    probe, sitemap_fetch_fn, page_fetch_fn)
 
     errors: List[str] = []
+    done_count = 0
     if pending:
         with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
             futures = {pool.submit(_run_one, d): d for d in pending}
             for future in as_completed(futures):
                 domain = futures[future]
+                done_count += 1
+                if progress_cb:
+                    progress_cb(done_count, len(pending), f"Site: {domain}")
                 try:
                     site_report = future.result()
                 except Exception as exc:
@@ -348,4 +358,8 @@ def run_source_type_job(
         "resumed_domains": len(domains) - len(pending),
         "sites": list(already_done.values()), "_summary": summary,
         "errors": errors,
+        # Exposed so jobs.py can report this job through the SAME summary shape every
+        # other channel's job uses (Collect tab's job table reads .new/.duplicate) —
+        # previously only reached storage.finish_run(), never the caller.
+        "returned": rows_returned, "new": rows_new, "duplicate": rows_duplicate,
     }

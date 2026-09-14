@@ -633,6 +633,68 @@ def api_suggest_market_terms(pid: int, user: str = Depends(require_user)):
     return result
 
 
+def _project_geo_scope(cfg: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """market.geo_scope when the project has one (set via the AI-guided wizard's
+    geo-scope step); otherwise a synthetic country-level scope from market.country,
+    since every project has AT LEAST a country even when created through the plain
+    wizard (which never collects a geo_scope at all)."""
+    market = cfg.get("market", {})
+    if market.get("geo_scope"):
+        return market["geo_scope"]
+    country = market.get("country", "")
+    return {"level": "country", "value": country, "country": country} if country else None
+
+
+@app.post("/api/projects/{pid}/suggest-source-types")
+def api_suggest_source_types_for_project(pid: int, user: str = Depends(require_user)):
+    """HANDOFF §7 item 4 retrofit: the category-discovery pipeline (real source TYPES
+    like "café/venue listing sites"/"coffee brand blogs", then real sitemap-based site
+    discovery for each — source_type_mapping.py + site_intelligence.py +
+    discovery_pipeline.py) previously only ran once, at creation time, through the
+    AI-guided study wizard. This lets an EXISTING project run it too — real user report:
+    "why doesn't it search India's top food/lifestyle sites, cafes, coffee brands" for a
+    study that was created through the plain wizard, which never touches this pipeline
+    at all. Layer 1 only; nothing is written here — see /discover-sites-for-type and
+    the existing generic /api/discovery/confirm-sites for the write path."""
+    p = _project_or_404(pid)
+    cfg = p["config"]
+    category = cfg.get("product", {}).get("category", "")
+    if not category:
+        raise HTTPException(status_code=400, detail="This project has no category set.")
+    import source_type_mapping
+    try:
+        result = source_type_mapping.suggest_source_types(category, geo_scope=_project_geo_scope(cfg))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    storage.audit("source_types.suggest", "AI source-type discovery run", acting_user=user, project_id=pid)
+    return result
+
+
+@app.post("/api/projects/{pid}/discover-sites-for-type")
+def api_discover_sites_for_project(pid: int, body: Dict[str, Any], user: str = Depends(require_user)):
+    """Layer 2a for an existing project: real candidate sites for ONE confirmed source
+    type (source_type_hint), merged with the cross-project site-intelligence ledger —
+    same contract as /api/discovery/sites (called once per genre, not blended, for the
+    same reason the wizard does: a single call keeps surfacing the same mainstream
+    outlets over specialist/smaller sites). Read-only; nothing written until confirmed
+    via /api/discovery/confirm-sites."""
+    p = _project_or_404(pid)
+    cfg = p["config"]
+    category = cfg.get("product", {}).get("category", "")
+    source_type_hint = (body or {}).get("source_type_hint")
+    if not category:
+        raise HTTPException(status_code=400, detail="This project has no category set.")
+    import site_intelligence
+    try:
+        result = site_intelligence.discover_sites(category, geo_scope=_project_geo_scope(cfg),
+                                                   source_type_hint=source_type_hint)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    storage.audit("sites.discover", f"AI site discovery for '{source_type_hint or category}'",
+                  acting_user=user, project_id=pid)
+    return result
+
+
 @app.post("/api/projects/{pid}/feed-health")
 def api_feed_health(pid: int, body: Dict[str, Any] = None, user: str = Depends(require_user)):
     p = _project_or_404(pid)

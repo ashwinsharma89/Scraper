@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { Compass, Rss } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
+import { useJobs } from '../state/JobsState.jsx'
 import { useToast } from '../components/Toast.jsx'
 import { Card, EmptyState, HelpBox } from '../components/Ui.jsx'
 import SuggestSourcesPanel from '../components/SuggestSourcesPanel.jsx'
+import { mergeSites } from '../wizards/DiscoveryWizard/state.js'
 
 function ListEditor({ label, hint, value, onChange }) {
   return (
@@ -16,6 +18,7 @@ function ListEditor({ label, hint, value, onChange }) {
 
 export default function SourcePlan() {
   const { projectId, project, channels } = useAppState()
+  const { startWatching } = useJobs()
   const toast = useToast()
   const cfg = project.config
   const sp = cfg.source_plan
@@ -47,6 +50,13 @@ export default function SourcePlan() {
   const [geoTerms, setGeoTerms] = useState(null)
   const [discoveringGeoTerms, setDiscoveringGeoTerms] = useState(false)
   const [checkedGeoTerms, setCheckedGeoTerms] = useState(new Set())
+
+  const [sourceTypes, setSourceTypes] = useState(null)
+  const [discoveringSourceTypes, setDiscoveringSourceTypes] = useState(false)
+  const [sites, setSites] = useState([])
+  const [discoveringSitesFor, setDiscoveringSitesFor] = useState(null) // source-type name, or null
+  const [selectedSiteDomains, setSelectedSiteDomains] = useState(new Set())
+  const [launchingCollect, setLaunchingCollect] = useState(false)
 
   async function saveSources() {
     const newCfg = structuredClone(cfg)
@@ -168,6 +178,68 @@ export default function SourcePlan() {
       window.location.reload()
     } catch (e) {
       toast(e.message, true)
+    }
+  }
+
+  // HANDOFF §7 item 4 retrofit: the category-discovery pipeline (real source TYPES
+  // like "café/venue listing sites"/"coffee brand blogs", then real sitemap-based
+  // site discovery for each) previously only ran once, at creation time, through the
+  // AI-guided study wizard. This makes it reachable for an EXISTING project too.
+  async function doSuggestSourceTypes() {
+    setDiscoveringSourceTypes(true)
+    setSourceTypes(null)
+    try {
+      const r = await api(`/api/projects/${projectId}/suggest-source-types`, { method: 'POST' })
+      setSourceTypes(r)
+    } catch (e) {
+      toast(e.message, true)
+    } finally {
+      setDiscoveringSourceTypes(false)
+    }
+  }
+
+  async function doFindSitesForType(typeName) {
+    setDiscoveringSitesFor(typeName)
+    try {
+      const r = await api(`/api/projects/${projectId}/discover-sites-for-type`,
+        { method: 'POST', body: { source_type_hint: typeName } })
+      const { merged, added } = mergeSites(sites, r.sites || [], typeName)
+      setSites(merged)
+      setSelectedSiteDomains((prev) => {
+        const next = new Set(prev)
+        added.forEach((s) => { if (!s.needs_validation) next.add(s.domain) })
+        return next
+      })
+    } catch (e) {
+      toast(e.message, true)
+    } finally {
+      setDiscoveringSitesFor(null)
+    }
+  }
+
+  function toggleSite(domain, checked) {
+    setSelectedSiteDomains((prev) => {
+      const next = new Set(prev)
+      checked ? next.add(domain) : next.delete(domain)
+      return next
+    })
+  }
+
+  async function doConfirmSitesAndCollect() {
+    const domains = [...selectedSiteDomains]
+    if (!domains.length) { toast('Check at least one site first', true); return }
+    setLaunchingCollect(true)
+    try {
+      await api('/api/discovery/confirm-sites', { method: 'POST', body: { category: cfg.product?.category, domains } })
+      const r = await api(`/api/projects/${projectId}/collect`, {
+        method: 'POST', body: { channel: 'generic_site', params: { category: cfg.product?.category, seed_domains: domains } },
+      })
+      toast(`Collecting from ${domains.length} real site(s) — job #${r.job_id}. Watch "Recent jobs" in Collect.`)
+      startWatching()
+    } catch (e) {
+      toast(e.message, true)
+    } finally {
+      setLaunchingCollect(false)
     }
   }
 
@@ -302,6 +374,26 @@ export default function SourcePlan() {
           <GeoTermResults r={geoTerms} checked={checkedGeoTerms} setChecked={setCheckedGeoTerms} onApply={applyGeoTerms} />
         )}
       </Card>
+
+      <Card><h3>✨ Discover source types + real sites (AI)</h3>
+        <p className="muted">Beyond news/e-commerce/forums: real, category-specific source
+          types for <b>{cfg.product?.category || 'this category'}</b> in {mkt.country || 'this market'} —
+          e.g. café/venue listing sites, brand blogs, lifestyle publications the AI names
+          specifically for this vertical. For each type you confirm, real sites are found
+          (sitemap-crawled, keyword-matched — not just RSS subscription), and collecting from
+          them runs as a normal job you can watch in Collect.</p>
+        <button onClick={doSuggestSourceTypes} disabled={discoveringSourceTypes}>
+          {discoveringSourceTypes ? 'Asking Claude…' : '✨ Suggest source types for this category'}
+        </button>
+        {sourceTypes && (
+          <SourceTypeResults r={sourceTypes} sites={sites} discoveringFor={discoveringSitesFor}
+            onFindSites={doFindSitesForType} />
+        )}
+        {!!sites.length && (
+          <SiteResults sites={sites} checked={selectedSiteDomains} onToggle={toggleSite}
+            onConfirm={doConfirmSitesAndCollect} launching={launchingCollect} />
+        )}
+      </Card>
     </>
   )
 }
@@ -430,6 +522,80 @@ function GeoTermResults({ r, checked, setChecked, onApply }) {
           <span><b>{t.name}</b><br /><span className="muted">{t.why || ''}</span></span>
         </label>
       )) : <p className="muted">Nothing came back — try again in a moment.</p>}
+    </div>
+  )
+}
+
+function SourceTypeResults({ r, sites, discoveringFor, onFindSites }) {
+  const types = r.source_types || []
+  if (!types.length) return <p className="muted">Nothing came back — try again in a moment.</p>
+  const foundFor = new Set(sites.map((s) => s.bucket))
+  return (
+    <div className="card" style={{ borderColor: 'var(--primary)' }}>
+      <h4>✨ {types.length} source type(s) for this category</h4>
+      <div className="pick-list">
+        {types.map((s) => {
+          const unsupported = s.strategy === 'unsupported'
+          const existing = s.strategy === 'existing_channel'
+          const badge = existing ? <span className="badge tier1">{s.channel} channel — already covered</span>
+            : unsupported ? <span className="badge tier3">not supported</span>
+              : <span className="badge tier2">new: site discovery</span>
+          return (
+            <div className="pick-row" key={s.name} style={{ alignItems: 'center' }}>
+              <div className="pick-main">
+                <div className="pick-name">{s.name} {badge}</div>
+                <div className="pick-why">{s.why || ''}
+                  {unsupported && ' — app-only/anti-automation platform; MarketLens has no way to collect from this (documented gap, not a bug).'}
+                  {existing && ' — this study already collects this via its own channel; no site discovery needed.'}</div>
+              </div>
+              {!existing && !unsupported && (
+                <button className="ghost" onClick={() => onFindSites(s.name)}
+                  disabled={discoveringFor === s.name}>
+                  {discoveringFor === s.name ? 'Finding…' : foundFor.has(s.name) ? 'Find more sites' : 'Find real sites'}
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function SiteResults({ sites, checked, onToggle, onConfirm, launching }) {
+  const buckets = [...new Set(sites.map((s) => s.bucket || ''))]
+  return (
+    <div className="card" style={{ borderColor: 'var(--primary)' }}>
+      <div className="card-head"><h4>{sites.length} candidate site(s)</h4>
+        <button onClick={onConfirm} disabled={launching}>
+          {launching ? 'Starting…' : `Collect from ${checked.size} checked site(s)`}
+        </button>
+      </div>
+      <p className="muted">Sites with a proven track record are pre-checked; new/unverified
+        ones need your explicit OK. Confirming launches a real collection job (sitemap-crawled,
+        keyword-matched pages) — watch it in Collect → Recent jobs.</p>
+      {buckets.map((bucket) => (
+        <div key={bucket || '_'}>
+          {bucket && <h5 className="pick-bucket">{bucket}</h5>}
+          <div className="pick-list">
+            {sites.filter((s) => (s.bucket || '') === bucket).map((s) => (
+              <label className="pick-row" key={s.domain}>
+                <input type="checkbox" checked={checked.has(s.domain)} style={{ width: 'auto' }}
+                  onChange={(e) => onToggle(s.domain, e.target.checked)} />
+                <div className="pick-main">
+                  <div className="pick-name">{s.name || s.domain} <span className="muted">({s.domain})</span>
+                    {s.known && <span className="badge tier1">known</span>}
+                    {s.needs_validation && <span className="needs-badge">needs validation</span>}
+                    {s.validated_by_human && <span className="badge tier1">human-validated</span>}
+                  </div>
+                  <div className="pick-why">{s.why || ''}
+                    {!!s.times_used && ` · used ${s.times_used}× before, confidence ${Math.round((s.confidence || 0) * 100)}%`}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

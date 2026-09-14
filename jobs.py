@@ -159,6 +159,38 @@ def run_collection(project_id: int, channel: str, params: Optional[Dict[str, Any
         raise ValueError(f"Project {project_id} not found")
     cfg = project["config"]
 
+    # generic_site is a fundamentally different mechanism (real sitemap-crawling
+    # across confirmed domains via discovery_pipeline.run_source_type_job(), not a
+    # single scraper.collect(cfg, params) call) -- it isn't in scrapers._REGISTRY and
+    # manages its own run row internally (it calls storage.start_run() itself when no
+    # run_id is passed), so it branches out here before the generic
+    # start_run/get_scraper/save_items/finish_run flow below, which would otherwise
+    # create a second, unused run row for the same job. HANDOFF §7 item 4: this is
+    # the retrofit that lets an EXISTING project (not just the AI-guided wizard at
+    # creation time) discover and collect from real category-specific sites (e.g.
+    # "café/venue listing sites", "coffee brand blogs") -- previously only reachable
+    # by creating a brand-new project through the wizard.
+    if channel == "generic_site":
+        import discovery_pipeline
+        category = params.get("category") or cfg.get("product", {}).get("category", "")
+        seed_domains = params.get("seed_domains") or []
+        keywords = params.get("keywords") or ([category] if category else [])
+        relevance_terms = cfg.get("relevance_terms") or ([category] if category else [])
+        per_source_cap = int(params.get("per_source_cap") or discovery_pipeline.DEFAULT_PER_SOURCE_CAP)
+        result = discovery_pipeline.run_source_type_job(
+            project_id, category, seed_domains, keywords=keywords,
+            relevance_terms=relevance_terms, per_source_cap=per_source_cap,
+            job_kind=params.get("job_kind", "backfill"), triggered_by=triggered_by,
+            progress_cb=progress_cb,
+        )
+        storage.audit("collection", f"generic_site: +{result.get('new', 0)} new / "
+                      f"{result.get('duplicate', 0)} dup", acting_user=triggered_by,
+                      project_id=project_id)
+        return {"run_id": result["run_id"], "channel": channel,
+                "returned": result.get("returned", 0), "new": result.get("new", 0),
+                "duplicate": result.get("duplicate", 0), "errors": result.get("errors", []),
+                "diagnostics": result.get("_summary", {})}
+
     # Image analysis is derived: gather image URLs collected by the e-commerce channel.
     if channel == "image_analysis" and not params.get("image_urls"):
         params = dict(params)

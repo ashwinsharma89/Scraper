@@ -310,6 +310,43 @@ def test_job_persists_real_items_with_raw_html_category_source_type(fresh_db):
     assert report["_summary"]["pages_relevant"] == 1
 
 
+def test_job_return_shape_matches_other_channels_job_summary(fresh_db):
+    """jobs.py's job dict reads .new/.duplicate the same way for every channel's
+    summary -- run_source_type_job() previously computed these internally (for
+    storage.finish_run()) but never returned them, so a generic_site job's Collect
+    tab row would have shown "—" for New/Dup forever."""
+    pid = storage.create_project("P", {})
+    page_fetch = _page_fetch_for({
+        "https://good.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+        "https://good.example/coffee/relevant-2": ARTICLE_ABOUT_SOMETHING_ELSE,
+    })
+    report = dp.run_source_type_job(
+        pid, "coffee", ["good.example"], keywords=["coffee"], relevance_terms=["coffee"],
+        probe_fn=_reachable_probe, sitemap_fetch_fn=_sitemap_fetch, page_fetch_fn=page_fetch,
+    )
+    assert report["returned"] == 1
+    assert report["new"] == 1
+    assert report["duplicate"] == 0
+
+
+def test_job_reports_progress_as_each_domain_completes(fresh_db):
+    pid = storage.create_project("P", {})
+    page_fetch = _page_fetch_for({
+        "https://good.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+        "https://other.example/coffee/relevant-1": ARTICLE_ABOUT_COFFEE,
+    })
+    calls = []
+    dp.run_source_type_job(
+        pid, "coffee", ["good.example", "other.example"], keywords=["coffee"],
+        relevance_terms=["coffee"], probe_fn=_reachable_probe,
+        sitemap_fetch_fn=_sitemap_fetch_multi, page_fetch_fn=page_fetch,
+        progress_cb=lambda cur, total, label: calls.append((cur, total, label)),
+    )
+    assert sorted(c[0] for c in calls) == [1, 2]
+    assert all(c[1] == 2 for c in calls)
+    assert all("Site:" in c[2] for c in calls)
+
+
 def test_job_without_relevance_terms_persists_nothing(fresh_db):
     """No real relevance verdict -> nothing durable is stored, matching the same
     honesty rule the pilot already applies to the ledger."""

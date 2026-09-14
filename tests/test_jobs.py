@@ -114,6 +114,49 @@ def test_enqueue_and_report_progress_surface_on_the_job_dict(fresh_db, monkeypat
     # the value shape.
 
 
+def test_run_collection_branches_generic_site_to_discovery_pipeline(fresh_db, monkeypatch):
+    """HANDOFF §7 item 4 retrofit: generic_site isn't in scrapers._REGISTRY and manages
+    its own run row internally -- run_collection() must route it to
+    discovery_pipeline.run_source_type_job() instead of the normal
+    start_run/get_scraper/save_items/finish_run flow (which would create a second,
+    unused run row for the same job)."""
+    import discovery_pipeline
+
+    pid = storage.create_project("P", {"product": {"category": "coffee"},
+                                       "relevance_terms": ["coffee", "espresso"]})
+    captured = {}
+
+    def fake_run_source_type_job(project_id, category, seed_domains, keywords=None, *,
+                                 relevance_terms=None, per_source_cap=100, job_kind="backfill",
+                                 run_id=None, triggered_by=None, progress_cb=None, **kw):
+        captured.update(project_id=project_id, category=category, seed_domains=seed_domains,
+                        keywords=keywords, relevance_terms=relevance_terms,
+                        per_source_cap=per_source_cap)
+        if progress_cb:
+            progress_cb(1, 1, "Site: real.example")
+        real_run_id = storage.start_run(project_id, "generic_site", {}, triggered_by)
+        storage.finish_run(real_run_id, rows_returned=2, rows_new=2, rows_duplicate=0,
+                           errors=[], status="done")
+        return {"run_id": real_run_id, "returned": 2, "new": 2, "duplicate": 0,
+                "errors": [], "_summary": {"sites_probed": 1}}
+
+    monkeypatch.setattr(discovery_pipeline, "run_source_type_job", fake_run_source_type_job)
+
+    calls = []
+    summary = jobs.run_collection(
+        pid, "generic_site", {"seed_domains": ["real.example"], "per_source_cap": 50},
+        triggered_by="alice", progress_cb=lambda cur, total, label="": calls.append((cur, total, label)),
+    )
+    assert captured["category"] == "coffee"  # fell back from the project's own config
+    assert captured["seed_domains"] == ["real.example"]
+    assert captured["relevance_terms"] == ["coffee", "espresso"]  # from cfg, not fabricated
+    assert captured["per_source_cap"] == 50
+    assert summary["new"] == 2 and summary["duplicate"] == 0
+    assert calls == [(1, 1, "Site: real.example")]
+    # Exactly one run row -- run_source_type_job's own start_run(), not a second one.
+    assert len(storage.list_runs(pid)) == 1
+
+
 def test_report_progress_sets_progress_only_while_running():
     job_id = 999999  # isolated fake id, no real project needed for this unit check
     with jobs._jobs_lock:
