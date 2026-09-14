@@ -329,6 +329,18 @@ def collect(
     today = date.today()
     start_date = params.get("start_date") or (today - timedelta(days=90)).isoformat()
     end_date = params.get("end_date") or today.isoformat()
+    # Only enforce a date window when the CALLER explicitly asked for one (Extensive
+    # research always does: collect-extensive always sets start_date/end_date from the
+    # chosen year). A plain single-channel "Run" click leaves both unset -- falls back
+    # to the last-90-days default above for Google News's OWN chunking, but doesn't
+    # newly constrain Bing/RSS, which were never date-scoped for a "just get me
+    # what's current" collection either. See _collect_feed()'s docstring comment for
+    # the real bug this closes: picking "Year: 2026" still returned items back to
+    # 2018, because only Google News's per-chunk after:/before: query operator
+    # actually restricted by date -- Bing News (no date-range operator at all) and
+    # regular RSS (always just "whatever's in the feed now") silently ignored it.
+    explicit_window = bool(params.get("start_date") or params.get("end_date"))
+    date_window = (start_date, end_date) if explicit_window else None
 
     plan = cfg.get("source_plan", {})
     seen_links: set = set()
@@ -354,7 +366,7 @@ def collect(
             for window in windows:
                 url = inject_date_range(base_url, window["after"], window["before"])
                 _collect_feed(url, terms, or_keywords, fetch, fetch_bodies, result, seen_links,
-                              is_google_news=True, feed_meta=feed, mkt=mkt)
+                              is_google_news=True, feed_meta=feed, mkt=mkt, date_window=date_window)
                 _tick(f"Google News: {feed.get('language')}/{feed.get('structure')} "
                       f"{window['after']}..{window['before']}")
         except Exception as exc:
@@ -368,7 +380,8 @@ def collect(
         base_url = feed["url"]
         try:
             _collect_feed(base_url, terms, or_keywords, fetch, fetch_bodies, result, seen_links,
-                          is_google_news=True, feed_meta=feed, mkt=mkt, engine="bing_news")
+                          is_google_news=True, feed_meta=feed, mkt=mkt, engine="bing_news",
+                          date_window=date_window)
         except Exception as exc:
             result.error(f"Bing News feed failed ({feed.get('language')}/{feed.get('structure')}): {exc}")
         _tick(f"Bing News: {feed.get('language')}/{feed.get('structure')}")
@@ -379,7 +392,7 @@ def collect(
         try:
             _collect_feed(rss_url, terms, or_keywords, fetch, fetch_bodies, result, seen_links,
                           is_google_news=False, feed_meta={"url": rss_url},
-                          mkt={"only": False, "terms": [], "cctld": ""})
+                          mkt={"only": False, "terms": [], "cctld": ""}, date_window=date_window)
         except Exception as exc:
             result.error(f"RSS feed failed ({rss_url}): {exc}")
         _tick(f"RSS: {rss_url}")
@@ -389,11 +402,17 @@ def collect(
                      f"item(s) (no signal they relate to {country or 'the target market'}). "
                      f"Disable with market_only=false, or add city/region terms to market_terms.")
 
+    if explicit_window and result.diagnostics.get("date_filtered_out"):
+        result.error(f"Date window filter: dropped {result.diagnostics['date_filtered_out']} item(s) "
+                     f"published outside the requested {start_date}..{end_date} range. Google News's "
+                     f"own query already restricts by date; Bing News (no date-range operator) and "
+                     f"regular RSS (always just current feed content) needed this enforced here instead.")
+
     return result
 
 
 def _collect_feed(url, terms, or_keywords, fetch, fetch_bodies, result, seen_links,
-                  *, is_google_news, feed_meta, mkt=None, engine=None):
+                  *, is_google_news, feed_meta, mkt=None, engine=None, date_window=None):
     mkt = mkt or {"only": False, "terms": [], "cctld": ""}
     # is_google_news controls "query-scoped feed" behavior (semantic backstop instead of
     # hard-drop, always-fetch-body) — Bing News feeds are ALSO query-scoped and share
@@ -421,6 +440,23 @@ def _collect_feed(url, terms, or_keywords, fetch, fetch_bodies, result, seen_lin
         summary = entry.get("summary", "")
         haystack = f"{title} {summary}"
         if not matches_or_filter(haystack, or_keywords):
+            continue
+
+        # Real bug found live: a user picked "Year: 2026" for Extensive research and
+        # got items dated back to 2018. Root cause -- only Google News's per-chunk
+        # after:/before: query operator actually restricts by date; Bing News has NO
+        # date-range operator at all (a real, permanent limitation of its search API,
+        # already documented above), and a regular RSS feed just returns whatever is
+        # CURRENTLY in it, with nothing checking that against the requested window
+        # either. Enforced here, uniformly, for every feed type: Google News's own
+        # query-level restriction should already satisfy this (so this is also a
+        # backstop against Google's date operator not always being exact); Bing/RSS
+        # now actually respect the window instead of silently ignoring it. An item
+        # with no parseable published date is kept, not penalized for missing data --
+        # never fabricate a date to filter by.
+        published_date = (entry.get("published") or "")[:10]
+        if date_window and published_date and not (date_window[0] <= published_date <= date_window[1]):
+            result.diagnostics["date_filtered_out"] = result.diagnostics.get("date_filtered_out", 0) + 1
             continue
 
         article_html = None

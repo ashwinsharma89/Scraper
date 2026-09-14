@@ -561,3 +561,98 @@ def test_collect_with_no_progress_cb_behaves_exactly_as_before():
 
     res = news.collect(_cfg(), {"start_date": "2024-01-01", "end_date": "2024-01-31"}, fetch_fn=fetch)
     assert len(res.items) == 1
+
+
+def test_explicit_date_window_filters_out_of_range_bing_and_rss_items():
+    """Real bug found live: a user picked "Year: 2026" for Extensive research (which
+    always sets explicit start_date/end_date) and got items dated back to 2018.
+    Root cause: only Google News's per-chunk after:/before: query operator actually
+    restricted by date -- Bing News (no date-range operator at all, a permanent API
+    limitation) and regular RSS (always just current feed content) silently ignored
+    the requested window entirely. Both must now respect it when one is explicitly
+    requested."""
+    BING_RSS = """<?xml version='1.0'?><rss version='2.0'><channel><title>Bing</title>
+    <item><title>Acme Cola in range</title><link>http://bing/1</link>
+      <description>Acme Cola in range</description><pubDate>2026-03-15</pubDate></item>
+    <item><title>Acme Cola way out of range</title><link>http://bing/2</link>
+      <description>Acme Cola way out of range</description><pubDate>2018-05-01</pubDate></item>
+    </channel></rss>"""
+    RSS_FEED = """<?xml version='1.0'?><rss version='2.0'><channel><title>Direct</title>
+    <item><title>Acme Cola direct RSS in range</title><link>http://direct/1</link>
+      <description>Acme Cola direct RSS in range</description><pubDate>2026-03-20</pubDate></item>
+    <item><title>Acme Cola direct RSS stale</title><link>http://direct/2</link>
+      <description>Acme Cola direct RSS stale</description><pubDate>2019-01-01</pubDate></item>
+    </channel></rss>"""
+
+    cfg = {
+        "relevance_terms": ["Acme Cola"],
+        "market": {"languages": ["en"]},
+        "source_plan": {
+            "google_news_feeds": [],
+            "bing_news_feeds": [{"language": "en", "structure": "brand", "url": "https://www.bing.com/news/search?q=x"}],
+            "rss_feeds": ["http://direct/feed"],
+        },
+    }
+
+    def fetch(url):
+        if "bing.com" in url:
+            return _Resp(BING_RSS)
+        if url == "http://direct/feed":
+            return _Resp(RSS_FEED)
+        return _Resp("", status=404)
+
+    res = news.collect(cfg, {"start_date": "2026-01-01", "end_date": "2026-12-31"}, fetch_fn=fetch)
+    titles = {i["title"] for i in res.items}
+    assert titles == {"Acme Cola in range", "Acme Cola direct RSS in range"}
+    assert "way out of range" not in " ".join(titles)
+    assert "stale" not in " ".join(titles)
+    # Honestly reported, not silently dropped.
+    assert res.diagnostics.get("date_filtered_out") == 2
+    assert any("Date window filter" in e and "2 item(s)" in e for e in res.errors)
+
+
+def test_without_an_explicit_date_window_old_bing_and_rss_items_are_not_filtered():
+    """The fix is scoped to explicit requests (Extensive research always sets
+    start_date/end_date) -- a plain single-channel "Run" click that leaves both unset
+    must behave exactly as before, or every existing fixture using an arbitrary old
+    pubDate with no explicit window would start silently losing items."""
+    BING_RSS = """<?xml version='1.0'?><rss version='2.0'><channel><title>Bing</title>
+    <item><title>Acme Cola old but no window requested</title><link>http://bing/1</link>
+      <description>Acme Cola old but no window requested</description><pubDate>2018-05-01</pubDate></item>
+    </channel></rss>"""
+    cfg = {
+        "relevance_terms": ["Acme Cola"],
+        "market": {"languages": ["en"]},
+        "source_plan": {"google_news_feeds": [], "bing_news_feeds": [
+            {"language": "en", "structure": "brand", "url": "https://www.bing.com/news/search?q=x"}],
+            "rss_feeds": []},
+    }
+
+    def fetch(url):
+        return _Resp(BING_RSS)
+
+    res = news.collect(cfg, {}, fetch_fn=fetch)  # no start_date/end_date passed
+    assert len(res.items) == 1
+    assert res.diagnostics.get("date_filtered_out") is None
+
+
+def test_date_window_keeps_items_with_no_parseable_published_date():
+    """Never fabricate a date to filter by -- an item with no published date at all
+    must not be penalized for missing data."""
+    BING_RSS = """<?xml version='1.0'?><rss version='2.0'><channel><title>Bing</title>
+    <item><title>Acme Cola no date field</title><link>http://bing/1</link>
+      <description>Acme Cola no date field</description></item>
+    </channel></rss>"""
+    cfg = {
+        "relevance_terms": ["Acme Cola"],
+        "market": {"languages": ["en"]},
+        "source_plan": {"google_news_feeds": [], "bing_news_feeds": [
+            {"language": "en", "structure": "brand", "url": "https://www.bing.com/news/search?q=x"}],
+            "rss_feeds": []},
+    }
+
+    def fetch(url):
+        return _Resp(BING_RSS)
+
+    res = news.collect(cfg, {"start_date": "2026-01-01", "end_date": "2026-12-31"}, fetch_fn=fetch)
+    assert len(res.items) == 1

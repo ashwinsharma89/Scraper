@@ -269,6 +269,32 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   real single-channel news collect (110 items, 100 Google/10 Bing) showed correctly in
   the breakdown table, and the download button produced a real, valid 112-row
   (header + 110 items) "All Items" tab with the correct self-documenting description row.
+- **Real bug found + fixed (user report): Extensive research's date window was only
+  ever enforced for Google News.** Picking "Year: 2026" still returned real items
+  dated back to 2018. Root cause (`scrapers/news.py`): only Google News's per-chunk
+  injected `after:`/`before:` query operator actually restricted by date — Bing News
+  has **no date-range operator at all** (a real, permanent limitation of its search
+  API, already documented in the code) and a regular RSS feed just returns whatever's
+  *currently* in it; neither was ever checked against the requested window. Fixed by
+  enforcing `date_window` (the caller's `start_date`/`end_date`) as a post-fetch
+  filter in `_collect_feed()`, applied uniformly to all three feed types — Google's
+  own query-level restriction should already satisfy it (so this doubles as a
+  backstop against Google's date operator not always being exact). **Deliberately
+  scoped to only when the caller explicitly passed `start_date`/`end_date`**
+  (Extensive research always does; a plain single-channel "Run" click never did and
+  still doesn't) — an unconditional filter using the internal 90-day default would
+  have silently broken every existing test using an arbitrary old fixture `pubDate`
+  with no explicit window, confirmed by trying that first and watching
+  `test_rss_summary_used_as_first_paragraph_when_body_unextractable` fail. An item
+  with no parseable `published` date is kept, never penalized for missing data.
+  Dropped counts are honestly reported (`result.diagnostics["date_filtered_out"]` +
+  a `result.error(...)` note), matching the existing market-filter note's pattern.
+  4 new tests (explicit-window filtering, no-window-no-change regression, missing-
+  date safety). Live-verified end-to-end against the real demo project: a real
+  Extensive research run for Year 2026 against auto-generated Google+Bing News feeds
+  correctly reported "Date window filter: dropped 6 item(s)...", and every one of
+  the 71 items actually stored was confirmed (via a direct API query of all stored
+  rows) to genuinely be dated 2026 — zero leakage.
 - **Suggested-RSS-feeds baked into the wizard** (HANDOFF §7 item 1) — the same
   ✨ Suggest sources → validate → confirm flow (extracted into
   `frontend/src/components/SuggestSourcesPanel.jsx`, shared with Source plan) now runs
