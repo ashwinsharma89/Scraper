@@ -53,6 +53,25 @@ RECENT_ARTICLES_SITEMAP = """<?xml version="1.0"?>
   <url><loc>https://example.com/news/coffee-prices-surge</loc><lastmod>2026-09-13</lastmod></url>
 </urlset>"""
 
+# The exact real shape found live (input #7, city-guide site discovery on India/
+# coffee: whatshot.in). The sitemap PROTOCOL says a sitemap-of-sitemaps must use a
+# <sitemapindex> tag, but this real, live site wraps its sub-sitemap references in a
+# plain <urlset> instead -- every "url" is itself another .xml sitemap file, never a
+# content page. Confirmed live: raw_sitemap_urls=171, matched_keywords=0, because
+# none of the 171 sub-sitemaps were ever followed.
+URLSET_WRAPPING_SUB_SITEMAPS = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/sitemap/delhi-ncr.xml</loc><lastmod>2026-09-01T10:00:00+05:30</lastmod></url>
+  <url><loc>https://example.com/sitemap/delhi-ncr-food-and-drinks.xml</loc><lastmod>2026-09-14T10:30:10+05:30</lastmod></url>
+  <url><loc>https://example.com/sitemap/bangalore.xml</loc><lastmod>2026-09-01T10:00:00+05:30</lastmod></url>
+</urlset>"""
+
+DELHI_FOOD_SUB_SITEMAP = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/delhi-ncr/best-coffee-shops</loc></url>
+  <url><loc>https://example.com/delhi-ncr/best-pizza</loc></url>
+</urlset>"""
+
 
 def test_discover_urls_follows_one_level_of_sitemapindex_nesting():
     def fetch(url):
@@ -201,3 +220,39 @@ def test_parse_locs_with_lastmod_does_not_shift_lastmod_onto_the_wrong_loc():
     assert by_loc["https://example.com/google-news-sitemap.xml"] is None
     assert by_loc["https://example.com/sitemaps/old-2026-8-1-5.xml"] == "2026-08-01"
     assert by_loc["https://example.com/sitemaps/recent-2026-9-11-15.xml"] == "2026-09-13"
+
+
+def test_discover_urls_follows_sub_sitemaps_wrapped_in_a_plain_urlset():
+    """Real bug found live (input #7, whatshot.in): a sitemap-of-sitemaps wrapped in
+    <urlset> instead of the standard <sitemapindex> tag was never followed at all --
+    every sub-sitemap reference was treated as a final content URL, so real,
+    coffee-relevant pages one level down were completely invisible to keyword
+    matching despite the site being fully reachable."""
+    def fetch(url):
+        if url == "https://example.com/sitemap.xml":
+            return _Resp(URLSET_WRAPPING_SUB_SITEMAPS)
+        if "delhi-ncr-food-and-drinks" in url:
+            return _Resp(DELHI_FOOD_SUB_SITEMAP)
+        return _Resp("<urlset></urlset>")
+
+    r = sd.discover_urls("example.com", keywords=["coffee"], fetch_fn=fetch)
+    assert r["ok"] is True
+    assert "https://example.com/delhi-ncr/best-coffee-shops" in r["urls"]
+    assert "https://example.com/delhi-ncr/best-pizza" not in r["urls"]
+
+
+def test_discover_urls_plain_urlset_of_real_content_pages_is_not_treated_as_an_index():
+    """The new heuristic must not fire on a genuine flat urlset just because SOME
+    urls happen to end in .xml -- only when EVERY entry looks like a sitemap file."""
+    mixed = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://example.com/coffee/best-cafes</loc></url>
+      <url><loc>https://example.com/coffee/report.xml</loc></url>
+    </urlset>"""
+
+    def fetch(url):
+        return _Resp(mixed)
+
+    r = sd.discover_urls("example.com", keywords=[], fetch_fn=fetch)
+    assert r["ok"] is True
+    assert r["_summary"]["raw_sitemap_urls"] == 2  # both kept as content urls, not followed

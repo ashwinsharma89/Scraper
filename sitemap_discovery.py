@@ -105,7 +105,23 @@ def discover_urls(domain: str, keywords: Optional[List[str]] = None, *,
     xml_text = resp.text or ""
     entries = _parse_locs_with_lastmod(xml_text)
 
-    if _SITEMAPINDEX_RE.search(xml_text):
+    # Real bug found live (Increment/input #7, city-guide site discovery on India/
+    # coffee: whatshot.in): the sitemap PROTOCOL says a sitemap-of-sitemaps must be
+    # wrapped in a <sitemapindex> tag, but whatshot.in's real, live sitemap.xml wraps
+    # its 171 sub-sitemap references (delhi-ncr-food-and-drinks.xml,
+    # bangalore.xml, ...) in a plain <urlset> instead -- every entry's <loc> is
+    # itself another .xml sitemap file, never a content page. The tag-name check
+    # alone missed this entirely: raw_sitemap_urls=171, matched_keywords=0, because
+    # every "url" actually WAS a sitemap that was never followed. Detected here as a
+    # fallback: a <urlset> whose entries are ALL themselves .xml files (a real
+    # content page essentially never ends in a literal ".xml") gets the exact same
+    # follow-and-recency-sort treatment as a standard <sitemapindex>.
+    is_sitemap_index = bool(_SITEMAPINDEX_RE.search(xml_text))
+    if not is_sitemap_index and entries and all(
+            e["loc"].split("?", 1)[0].split("#", 1)[0].lower().endswith(".xml") for e in entries):
+        is_sitemap_index = True
+
+    if is_sitemap_index:
         # Sort by lastmod (most recent first) before truncating to max_nested, rather
         # than trusting raw document order. Real gap found live (Increment 9,
         # generalization testing on electric scooters/Vietnam): thanhnien.vn's real

@@ -104,8 +104,10 @@ def build_prompt(category: str, geo_scope: Optional[Dict[str, Any]] = None) -> s
     return "\n".join([
         f'Name the REAL kinds of online sources that would together give good coverage of the '
         f'category "{category}" in {where} — think broadly: news, social discussion, review/'
-        f"directory sites, lifestyle or vertical-specific blogs, forums, video, anything "
-        "genuinely relevant, not just one type.",
+        f"directory sites, lifestyle or vertical-specific blogs, forums, video, "
+        "city/regional guide platforms (e.g. a city-guide brand with separate editions per "
+        "major city — LBB, So.city, Whatshot are real examples in India; most markets have "
+        "an equivalent), anything genuinely relevant, not just one type.",
         "",
         "Return ONLY a JSON object with this key:",
         '  "source_types": [ {"name": "<short real source-type name, e.g. \\"lifestyle & food '

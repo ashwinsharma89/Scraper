@@ -105,6 +105,14 @@ def build_prompt(category: str, geo_scope: Optional[Dict[str, Any]] = None,
         "Rules:",
         "- Every site must be REAL — do not invent a name or guess at a domain you are not "
         "confident about.",
+        "- If a source publishes SEPARATE city/region editions (a city-guide platform like "
+        "LBB or So.city, a local newspaper's city sections, a listings site with per-city "
+        "pages, etc.), list each major city/region edition genuinely relevant to this "
+        "category as its OWN entry with its OWN real URL path (e.g. \"LBB Delhi\" at "
+        "\"lbb.in/delhi\", \"LBB Mumbai\" at \"lbb.in/mumbai\") — not one generic entry for "
+        "the platform's homepage. Real gap this closes: a bare \"LBB\" -> \"lbb.in\" entry "
+        "is a homepage, not a source of content about anything specific; the actual content "
+        "lives on its per-city pages.",
         "- No commentary outside the JSON.",
     ])
 

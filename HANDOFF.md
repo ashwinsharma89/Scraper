@@ -568,6 +568,52 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   real full-year Extensive news collection on the demo project: 85 real news items,
   77 via Google News, 8 via Bing News (9.4% Bing-only contribution) — confirmed via
   direct API call and visually in the browser.
+- **City/region-specific source discovery — three independent gaps, all real** (user
+  feedback input #7: "no reference from city/region/state based websites: Ex:lbbdelhi,
+  sodelhi for delhi"). All three fixed and live-verified before/after, no mocks:
+  1. `source_type_mapping.build_prompt()` (Layer 1) never even named "city/regional
+     guide platforms" as a genre to consider. Before fix: `/suggest-source-types` for a
+     fresh India/coffee project returned 8 genres, zero mention of city guides. After
+     adding one clause naming LBB/So.city/Whatshot as real examples: the SAME call
+     returns "City guide platforms (LBB, Whatshot, So.city)" as the FIRST result,
+     `strategy: "generic_site_discovery"`, with a genuine `why`. Chaining that
+     auto-generated hint straight into `discover-sites-for-type` (no manual hint typed
+     by a human) returned 29 real city-specific sites end-to-end.
+  2. `site_intelligence.build_prompt()` (Layer 2) asked for sites but never asked for
+     PER-CITY EDITIONS of a multi-city platform, so it returned one generic homepage
+     entry per platform. Before: hint "City/regional guide platforms (e.g. LBB,
+     So.city, Whatshot)" returned 10 entries, all homepages (LBB → lbb.in, Whatshot →
+     whatshot.in). After adding a rule requiring each major city/region edition as its
+     own entry with its own real URL path: the SAME call returns 19 entries with real
+     per-city paths — LBB Delhi (lbb.in/delhi), LBB Mumbai/Bangalore/Pune/Hyderabad,
+     Whatshot Delhi/Mumbai/Bangalore/Pune/Hyderabad (whatshot.in/{city}), So.city
+     Delhi/Mumbai/Bangalore, and more.
+  3. **The actual blocker, found only by then trying to crawl a confirmed city-guide
+     site end-to-end**: `sitemap_discovery.discover_urls()`'s sitemap-of-sitemaps
+     detection only recognized the sitemaps.org-standard `<sitemapindex>` root tag.
+     Real, live `whatshot.in/sitemap.xml` wraps its 171 sub-sitemap references
+     (`delhi-ncr-food-and-drinks.xml`, `bangalore.xml`, ...) in a plain `<urlset>`
+     instead — every "url" entry actually WAS another sitemap file, never a content
+     page, so none of the 171 sub-sitemaps were ever followed. Confirmed live before
+     fix: `discover_urls('whatshot.in', keywords=['coffee'])` →
+     `raw_sitemap_urls=171, matched_keywords=0`. Fixed with a fallback: a `<urlset>`
+     whose entries are ALL themselves `.xml` files (a real content page essentially
+     never ends in a literal `.xml`) gets the same follow-and-recency-sort treatment as
+     a standard `<sitemapindex>`. Confirmed live after fix, same call:
+     `raw_sitemap_urls=3305, matched_keywords=131`. Proved end-to-end via a real
+     `generic_site` collection job against whatshot.in on the India/coffee demo
+     project: 131 pages fetched, 130 extracted ok, 129 stored as relevant — real,
+     genuinely city-specific coffee articles, e.g. "Get Your Cup Of Blue Tokai Coffee
+     in Gurugram Now!" (delhi-ncr), spread across delhi-ncr (96), bangalore (16), pune
+     (15), agra (2) — confirmed by directly querying stored items, not just trusting
+     the summary counts. New regression tests in `tests/test_sitemap_discovery.py`
+     (13 tests total) cover both the `<urlset>`-wrapping-sub-sitemaps case and that a
+     `<urlset>` of genuine content pages is NOT mistakenly treated as an index. New
+     shared `json_salvage.py` (built alongside this work in input #6) also used here.
+  Also, from the same round of feedback: `config.suggest_subreddits()` now tries
+  country+category compound subreddit names in BOTH orderings (e.g. `coffeeindia` AND
+  `indiacoffee`) since real-world community naming isn't consistent — both confirmed
+  live as real, active subreddits via direct `curl` before the fix shipped.
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
