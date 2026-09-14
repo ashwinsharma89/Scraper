@@ -219,6 +219,12 @@ tr:hover td { background: var(--surface-2); }
 .badge.tier1 { background: var(--primary-soft); color: var(--primary-soft-text); }
 .badge.tier2 { background: var(--warn-soft); color: var(--warn); }
 .badge.tier3 { background: var(--bad-soft); color: var(--bad); }
+
+.job-progress { margin-top: .3rem; min-width: 180px; }
+.job-progress-bar { height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.job-progress-fill { height: 100%; background: var(--primary); transition: width .3s ease; }
+.job-progress-label { display: block; margin-top: .2rem; font-size: 11px; max-width: 320px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flag { background: var(--flag); color: var(--flag-ink); padding: .15rem .6rem; border-radius: 6px; font-weight: 700; font-size: 11px; }
 
 .channel-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem;

@@ -74,7 +74,11 @@ def _default_fetch(url: str):
 
 
 def collect(cfg: Dict[str, Any], params: Optional[Dict[str, Any]] = None,
-            *, fetch_fn: Optional[Callable[[str], Any]] = None) -> ScrapeResult:
+            *, fetch_fn: Optional[Callable[[str], Any]] = None,
+            progress_cb: Optional[Callable[[int, int, str], None]] = None) -> ScrapeResult:
+    """progress_cb(current, total, label) — called after each monthly chunk. See
+    scrapers/news.py's collect() docstring for the full rationale; same purely-
+    additive contract (optional, keyword-only, default None)."""
     params = params or {}
     fetch = fetch_fn or _default_fetch
     result = ScrapeResult(CHANNEL)
@@ -93,8 +97,11 @@ def collect(cfg: Dict[str, Any], params: Optional[Dict[str, Any]] = None,
     end_date = params.get("end_date") or today.isoformat()
 
     dropped = 0
-    for window in chunk_date_ranges(start_date, end_date, "monthly"):
+    windows = chunk_date_ranges(start_date, end_date, "monthly")
+    for i, window in enumerate(windows, start=1):
         url = build_url(query, window["after"], window["before"], maxrecords)
+        if progress_cb:
+            progress_cb(i, len(windows), f"GDELT: {window['after']}..{window['before']}")
         try:
             resp = fetch(url)
             if getattr(resp, "status_code", 200) >= 400:

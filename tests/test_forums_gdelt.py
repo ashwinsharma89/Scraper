@@ -133,3 +133,18 @@ def test_gdelt_drops_items_whose_title_matches_no_relevance_term():
     res = gdelt.collect(cfg, {"start_date": "2026-01-01", "end_date": "2026-01-31"}, fetch_fn=lambda u: R())
     assert [i["title"] for i in res.items] == ["Maggi price rises in KL"]  # noise dropped
     assert res.diagnostics.get("irrelevant_dropped") == 1
+
+
+def test_gdelt_collect_reports_progress_per_monthly_chunk():
+    class R:
+        status_code = 200
+        text = '{"articles":[]}'
+
+    cfg = {"relevance_terms": ["Maggi"], "source_plan": {"gdelt": {"sourcecountry": "MY"}},
+           "collection_settings": {}}
+    calls = []
+    gdelt.collect(cfg, {"start_date": "2026-01-01", "end_date": "2026-03-31"}, fetch_fn=lambda u: R(),
+                  progress_cb=lambda cur, total, label: calls.append((cur, total, label)))
+    assert [c[0] for c in calls] == [1, 2, 3]
+    assert all(c[1] == 3 for c in calls)
+    assert "GDELT" in calls[0][2]

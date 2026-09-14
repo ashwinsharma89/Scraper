@@ -21,6 +21,23 @@ function statusBadge(status) {
   return <span className="badge pos"><CheckCircle2 size={11} /> done</span>
 }
 
+// Real-time progress within a single running job — the actual gap a flat "running"
+// badge left open for a full-year, monthly-chunked Extensive run that can take
+// minutes. Only news/gdelt currently report sub-steps (see scrapers/news.py's
+// collect() docstring); every other channel's job just shows the status badge alone,
+// which is honest — there's nothing more specific to report for a single quick request.
+function JobProgress({ job }) {
+  if (job.status !== 'running' || !job.progress) return null
+  const { current, total, label } = job.progress
+  const pct = total ? Math.round((current / total) * 100) : 0
+  return (
+    <div className="job-progress" title={label}>
+      <div className="job-progress-bar"><div className="job-progress-fill" style={{ width: `${pct}%` }} /></div>
+      <span className="muted job-progress-label">{current}/{total} — {label}</span>
+    </div>
+  )
+}
+
 export default function Collect() {
   const { projectId, project, channels } = useAppState()
   const { jobs, startWatching } = useJobs()
@@ -140,7 +157,8 @@ export default function Collect() {
                   const s = j.summary || {}
                   return (
                     <tr key={j.id}>
-                      <td>{j.id}</td><td>{j.channel}</td><td>{statusBadge(j.status)}</td>
+                      <td>{j.id}</td><td>{j.channel}</td>
+                      <td>{statusBadge(j.status)}<JobProgress job={j} /></td>
                       <td>{j.triggered_by || ''}</td><td>{s.new ?? '—'}</td><td>{s.duplicate ?? '—'}</td>
                     </tr>
                   )

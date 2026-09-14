@@ -515,3 +515,49 @@ def test_collect_keeps_relevant_drops_irrelevant():
     kept = [i for i in res.items if i["title"].startswith("Acme Cola")][0]
     assert kept["link"] == "http://real/acme-1"
     assert "sugar-free" in kept["text"].lower()
+
+
+def test_collect_reports_progress_across_feeds_and_chunks():
+    """progress_cb is the real fix for Extensive research's biggest UX gap: a full-year,
+    monthly-chunked run across many feeds could take minutes with nothing but a flat
+    "running" badge. Real signal, not just a call count: current/total climb
+    monotonically and finish at total, with a human-readable label each step."""
+    cfg = _cfg()
+    cfg["source_plan"]["rss_feeds"] = ["http://myfeed/rss"]
+
+    def fetch(url):
+        if "news.google.com" in url:
+            return _Resp(RSS)
+        if url == "http://myfeed/rss":
+            return _Resp(RSS)
+        if url in ("http://news/1", "http://news/2"):
+            return _Resp(ARTICLE_RELEVANT, url="http://real/x")
+        return _Resp("", status=404)
+
+    calls = []
+    news.collect(cfg, {"start_date": "2024-01-01", "end_date": "2024-03-31", "chunk": "monthly"},
+                fetch_fn=fetch, progress_cb=lambda cur, total, label: calls.append((cur, total, label)))
+
+    # 1 Google News feed x 3 monthly chunks (Jan/Feb/Mar) + 1 RSS feed = 4 steps.
+    assert len(calls) == 4
+    assert [c[0] for c in calls] == [1, 2, 3, 4]
+    assert all(c[1] == 4 for c in calls)
+    assert all(c[2] for c in calls)  # every label is a non-empty string
+    assert "Google News" in calls[0][2]
+    assert "RSS" in calls[-1][2]
+
+
+def test_collect_with_no_progress_cb_behaves_exactly_as_before():
+    """progress_cb is purely additive -- omitting it (every existing caller, every other
+    test in this file) must not change collection behavior at all."""
+    def fetch(url):
+        if "news.google.com" in url:
+            return _Resp(RSS)
+        if url == "http://news/1":
+            return _Resp(ARTICLE_RELEVANT, url="http://real/acme-1")
+        if url == "http://news/2":
+            return _Resp(ARTICLE_WEATHER, url="http://real/weather-2")
+        return _Resp("", status=404)
+
+    res = news.collect(_cfg(), {"start_date": "2024-01-01", "end_date": "2024-01-31"}, fetch_fn=fetch)
+    assert len(res.items) == 1

@@ -286,6 +286,7 @@ def collect(
     params: Optional[Dict[str, Any]] = None,
     *,
     fetch_fn: Optional[Callable[[str], Any]] = None,
+    progress_cb: Optional[Callable[[int, int, str], None]] = None,
 ) -> ScrapeResult:
     """Collect news items across Google News search feeds + regular RSS feeds.
 
@@ -294,6 +295,14 @@ def collect(
       chunk — 'monthly' | 'weekly' | 'daily' | 'none'.
       or_keywords — comma-separated OR filter applied to title+summary.
       fetch_bodies — bool (default True): fetch article body for relevance/enrichment.
+
+    progress_cb(current, total, label), called after each feed/chunk fetch — the real
+    signal Extensive research needed (a full-year monthly-chunked run across many feeds
+    can take minutes with nothing but a flat "running" badge otherwise). Optional and
+    entirely additive: jobs.run_collection() only passes it when the channel's collect()
+    signature accepts it (introspected, not every channel needs per-step granularity),
+    and every existing direct call to collect(cfg, params) — every test in
+    tests/test_news.py included — is unaffected since it's a keyword-only default of None.
     """
     params = params or {}
     fetch = fetch_fn or _default_fetch
@@ -325,16 +334,29 @@ def collect(
     seen_links: set = set()
     result.diagnostics["off_market_dropped"] = 0
 
+    google_feeds = [f for f in plan.get("google_news_feeds", []) if f.get("url")]
+    windows = chunk_date_ranges(start_date, end_date, chunk_mode)
+    bing_feeds = [f for f in plan.get("bing_news_feeds", []) if f.get("url")] if params.get("bing_news", True) else []
+    rss_urls = plan.get("rss_feeds", [])
+    total_steps = len(google_feeds) * max(len(windows), 1) + len(bing_feeds) + len(rss_urls)
+    step = 0
+
+    def _tick(label: str) -> None:
+        nonlocal step
+        step += 1
+        if progress_cb:
+            progress_cb(step, total_steps, label)
+
     # 1) Google News search feeds (chunked over the date window).
-    for feed in plan.get("google_news_feeds", []):
-        base_url = feed.get("url")
-        if not base_url:
-            continue
+    for feed in google_feeds:
+        base_url = feed["url"]
         try:
-            for window in chunk_date_ranges(start_date, end_date, chunk_mode):
+            for window in windows:
                 url = inject_date_range(base_url, window["after"], window["before"])
                 _collect_feed(url, terms, or_keywords, fetch, fetch_bodies, result, seen_links,
                               is_google_news=True, feed_meta=feed, mkt=mkt)
+                _tick(f"Google News: {feed.get('language')}/{feed.get('structure')} "
+                      f"{window['after']}..{window['before']}")
         except Exception as exc:
             result.error(f"Google News feed failed ({feed.get('language')}/{feed.get('structure')}): {exc}")
 
@@ -342,26 +364,25 @@ def collect(
     # News's crawl missed). No date-range operator support, so this runs once per feed
     # rather than chunked; still fully market-filtered, relevance-validated, and
     # participates in the same dedup/clustering as everything else.
-    if params.get("bing_news", True):
-        for feed in plan.get("bing_news_feeds", []):
-            base_url = feed.get("url")
-            if not base_url:
-                continue
-            try:
-                _collect_feed(base_url, terms, or_keywords, fetch, fetch_bodies, result, seen_links,
-                              is_google_news=True, feed_meta=feed, mkt=mkt, engine="bing_news")
-            except Exception as exc:
-                result.error(f"Bing News feed failed ({feed.get('language')}/{feed.get('structure')}): {exc}")
+    for feed in bing_feeds:
+        base_url = feed["url"]
+        try:
+            _collect_feed(base_url, terms, or_keywords, fetch, fetch_bodies, result, seen_links,
+                          is_google_news=True, feed_meta=feed, mkt=mkt, engine="bing_news")
+        except Exception as exc:
+            result.error(f"Bing News feed failed ({feed.get('language')}/{feed.get('structure')}): {exc}")
+        _tick(f"Bing News: {feed.get('language')}/{feed.get('structure')}")
 
     # 3) Regular RSS feeds (no time travel; current window only). These are already the
     # publisher's own feed, so market gating is skipped (the outlet IS the market signal).
-    for rss_url in plan.get("rss_feeds", []):
+    for rss_url in rss_urls:
         try:
             _collect_feed(rss_url, terms, or_keywords, fetch, fetch_bodies, result, seen_links,
                           is_google_news=False, feed_meta={"url": rss_url},
                           mkt={"only": False, "terms": [], "cctld": ""})
         except Exception as exc:
             result.error(f"RSS feed failed ({rss_url}): {exc}")
+        _tick(f"RSS: {rss_url}")
 
     if mkt["only"] and result.diagnostics["off_market_dropped"]:
         result.error(f"Market filter dropped {result.diagnostics['off_market_dropped']} off-market "

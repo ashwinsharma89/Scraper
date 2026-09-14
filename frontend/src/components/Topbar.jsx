@@ -5,8 +5,13 @@ import { useJobs } from '../state/JobsState.jsx'
 
 export default function Topbar({ onNewStudy, onNewDiscovery }) {
   const { projects, projectId, selectProject } = useAppState()
-  const { activeCount } = useJobs()
+  const { activeCount, jobs } = useJobs()
   const navigate = useNavigate()
+  // Jobs run one at a time (single-writer queue) — at most one is ever "running";
+  // the rest are "queued". Its progress (when the channel reports one) is the real,
+  // specific signal worth surfacing here, not just a generic spinner.
+  const running = jobs.find((j) => j.status === 'running')
+  const pct = running?.progress ? Math.round((running.progress.current / running.progress.total) * 100) : null
 
   return (
     <header className="topbar">
@@ -23,9 +28,11 @@ export default function Topbar({ onNewStudy, onNewDiscovery }) {
       </div>
       <div className="topbar-right">
         {activeCount > 0 && (
-          <button className="ghost jobs-chip" onClick={() => navigate('/collect')}>
+          <button className="ghost jobs-chip" onClick={() => navigate('/collect')}
+            title={running?.progress?.label || ''}>
             <Loader2 size={14} className="spin" />
-            {activeCount} job{activeCount === 1 ? '' : 's'} running
+            {pct !== null ? `${running.channel} ${pct}%` : `${activeCount} job${activeCount === 1 ? '' : 's'} running`}
+            {pct !== null && activeCount > 1 ? ` (+${activeCount - 1} queued)` : ''}
           </button>
         )}
         <button className="ghost" onClick={onNewStudy}><Plus size={15} /> New study</button>

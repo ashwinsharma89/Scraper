@@ -10,6 +10,7 @@ every channel and every trigger (manual, scheduled, or API).
 """
 from __future__ import annotations
 
+import inspect
 import itertools
 import threading
 import time
@@ -80,9 +81,22 @@ def enqueue(project_id: int, channel: str, params: Optional[Dict[str, Any]] = No
             "run_id": None,
             "summary": None,
             "error": None,
+            "progress": None,  # {"current": int, "total": int, "label": str} while running
         }
     _queue.put(job_id)
     return job_id
+
+
+def report_progress(job_id: int, current: int, total: int, label: str = "") -> None:
+    """Called by a channel's collect() (via the progress_cb it optionally accepts) as it
+    works through a multi-step run (feeds x date-chunks, monthly windows, ...). Real
+    signal for Extensive research, which can otherwise sit on a flat "running" badge for
+    minutes. Silently no-ops if the job already finished/errored between polls (a stale
+    callback firing after job completion is harmless, not a bug to guard against loudly)."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job and job["status"] == "running":
+            job["progress"] = {"current": current, "total": total, "label": label}
 
 
 def get_job(job_id: int) -> Optional[Dict[str, Any]]:
@@ -118,7 +132,8 @@ def _execute(job_id: int) -> None:
         params = job["params"]
         triggered_by = job["triggered_by"]
 
-    summary = run_collection(project_id, channel, params, triggered_by)
+    progress_cb = lambda current, total, label="": report_progress(job_id, current, total, label)
+    summary = run_collection(project_id, channel, params, triggered_by, progress_cb=progress_cb)
 
     with _jobs_lock:
         job = _jobs[job_id]
@@ -129,8 +144,15 @@ def _execute(job_id: int) -> None:
 
 
 def run_collection(project_id: int, channel: str, params: Optional[Dict[str, Any]] = None,
-                   triggered_by: Optional[str] = None) -> Dict[str, Any]:
-    """Execute one collection synchronously. Used by the worker and the scheduler."""
+                   triggered_by: Optional[str] = None,
+                   progress_cb: Optional[Callable[[int, int, str], None]] = None) -> Dict[str, Any]:
+    """Execute one collection synchronously. Used by the worker and the scheduler.
+
+    progress_cb is passed through to the channel's collect() ONLY when that channel's
+    signature actually accepts it (introspected, not assumed) — most channels are a
+    single quick request and have no meaningful sub-steps to report; news/gdelt's
+    internal feed x date-chunk loops are the real case this exists for. Callers that
+    don't pass progress_cb (the scheduler, every existing test) are unaffected."""
     params = params or {}
     project = storage.get_project(project_id)
     if not project:
@@ -144,8 +166,11 @@ def run_collection(project_id: int, channel: str, params: Optional[Dict[str, Any
 
     run_id = storage.start_run(project_id, channel, params, triggered_by)
     scraper = get_scraper(channel)
+    collect_kwargs: Dict[str, Any] = {}
+    if progress_cb is not None and "progress_cb" in inspect.signature(scraper.collect).parameters:
+        collect_kwargs["progress_cb"] = progress_cb
     try:
-        result = scraper.collect(cfg, params)
+        result = scraper.collect(cfg, params, **collect_kwargs)
     except Exception as exc:
         storage.finish_run(run_id, rows_returned=0, rows_new=0, rows_duplicate=0,
                            errors=[f"{type(exc).__name__}: {exc}"], status="error")
