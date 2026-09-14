@@ -86,7 +86,16 @@ DATA_COLUMNS = [
 
 def build_workbook(project_id: int, published_after: Optional[str] = None,
                    published_before: Optional[str] = None,
+                   exclude_unrelated: bool = False,
                    out_path: Optional[str] = None) -> str:
+    """exclude_unrelated (HANDOFF §7, "target brand only" export filter): drop
+    brand_focus == "unrelated" rows from the raw data tabs (All Items + per-channel),
+    matching the SAME exclusion analytics.py's headline stats already apply by default
+    (_analyzed_rows(exclude_unrelated=True)) — until this flag, that consistency only
+    held for the aggregate numbers, not the raw rows a client might filter/pivot on
+    themselves. Off by default: the raw tabs' existing behavior (every collected item,
+    unfiltered) is a deliberate "never silently hide data" default and stays that way
+    unless the user opts in."""
     from openpyxl import Workbook
 
     project = storage.get_project(project_id)
@@ -96,7 +105,7 @@ def build_workbook(project_id: int, published_after: Optional[str] = None,
     styles = _styles()
 
     wb = Workbook()
-    _summary_tab(wb.active, project, cfg, styles, published_after, published_before)
+    _summary_tab(wb.active, project, cfg, styles, published_after, published_before, exclude_unrelated)
     _methodology_tab(wb.create_sheet("Methodology"), project_id, cfg, styles)
     _confidence_tab(wb.create_sheet("Confidence"), project_id, styles)
     _representativeness_tab(wb.create_sheet("Representativeness"), cfg, styles)
@@ -111,8 +120,14 @@ def build_workbook(project_id: int, published_after: Optional[str] = None,
             r["story_group_size"] = sizes.get(r.get("cluster_id"), 1)
         return rows
 
+    def _apply_brand_filter(rows):
+        if not exclude_unrelated:
+            return rows
+        return [r for r in rows if r.get("brand_focus") != "unrelated"]
+
     # Combined master tab: EVERY item across all channels, with analysis columns joined.
-    all_rows = _filter_dates(storage.items_with_analysis(project_id), published_after, published_before)
+    all_rows = _apply_brand_filter(
+        _filter_dates(storage.items_with_analysis(project_id), published_after, published_before))
     if all_rows:
         _channel_data_tab(wb.create_sheet("All Items"), _with_group_size(all_rows), styles)
 
@@ -120,7 +135,7 @@ def build_workbook(project_id: int, published_after: Optional[str] = None,
     counts = storage.count_items_by_source(project_id)
     for channel in sorted(counts):
         rows = storage.items_with_analysis(project_id, source=channel)
-        rows = _filter_dates(rows, published_after, published_before)
+        rows = _apply_brand_filter(_filter_dates(rows, published_after, published_before))
         if not rows:
             continue
         _channel_data_tab(wb.create_sheet(_safe_sheet_name(channel)), _with_group_size(rows), styles)
@@ -158,7 +173,7 @@ def _safe_sheet_name(name: str) -> str:
 # --------------------------------------------------------------------------- #
 # Individual tabs
 # --------------------------------------------------------------------------- #
-def _summary_tab(ws, project, cfg, styles, after, before):
+def _summary_tab(ws, project, cfg, styles, after, before, exclude_unrelated=False):
     ws.title = "Summary"
     ws["A1"] = "MarketLens — Study Summary"
     ws["A1"].font = styles["title_font"]
@@ -172,6 +187,9 @@ def _summary_tab(ws, project, cfg, styles, after, before):
         ("Tool version", f"MarketLens v{__version__}"),
         ("Generated (UTC)", datetime.now(timezone.utc).isoformat(timespec="seconds")),
         ("Date filter", f"{after or '—'} to {before or '—'}"),
+        ("Raw data tabs filter", "Target brand only — brand_focus='unrelated' rows excluded "
+         "from All Items + per-channel tabs" if exclude_unrelated
+         else "None — every collected item included, even brand_focus='unrelated'"),
         ("", ""),
         ("Brand", product.get("brand", "")),
         ("Parent company", product.get("parent_company", "")),

@@ -850,7 +850,8 @@ def api_export(pid: int, body: Dict[str, Any] = None, user: str = Depends(requir
     _project_or_404(pid)
     body = body or {}
     path = export_mod.build_workbook(pid, published_after=body.get("published_after"),
-                                     published_before=body.get("published_before"))
+                                     published_before=body.get("published_before"),
+                                     exclude_unrelated=bool(body.get("exclude_unrelated", False)))
     return {"path": path, "filename": Path(path).name}
 
 

@@ -533,6 +533,30 @@ def test_update_settings_endpoint_404s_on_unknown_project(client, monkeypatch):
     assert r.status_code == 404
 
 
+def test_export_endpoint_passes_exclude_unrelated_through_to_the_workbook(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+
+    captured = {}
+    import export as export_mod
+
+    def fake_build_workbook(project_id, published_after=None, published_before=None,
+                            exclude_unrelated=False, out_path=None):
+        captured["exclude_unrelated"] = exclude_unrelated
+        path = tmp_path / "x.xlsx"
+        path.write_text("stub")
+        return str(path)
+
+    monkeypatch.setattr(export_mod, "build_workbook", fake_build_workbook)
+    r = client.post(f"/api/projects/{pid}/export", json={"exclude_unrelated": True})
+    assert r.status_code == 200
+    assert captured["exclude_unrelated"] is True
+
+    r2 = client.post(f"/api/projects/{pid}/export", json={})
+    assert captured["exclude_unrelated"] is False  # default: nothing silently hidden
+
+
 def test_suggest_languages_endpoint(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     import language_suggestion

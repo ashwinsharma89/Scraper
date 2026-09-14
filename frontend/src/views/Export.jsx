@@ -13,6 +13,7 @@ export default function Export() {
   const [before, setBefore] = useState('')
   const [exportResult, setExportResult] = useState(null)
   const [building, setBuilding] = useState(false)
+  const [targetBrandOnly, setTargetBrandOnly] = useState(false)
   const [report, setReport] = useState('Click "Generate / preview" to assemble the Markdown skeleton, or download it directly.')
   const [archiveResult, setArchiveResult] = useState(null)
 
@@ -31,7 +32,8 @@ export default function Export() {
     setExportResult(null)
     try {
       const r = await api(`/api/projects/${projectId}/export`, {
-        method: 'POST', body: { published_after: after || null, published_before: before || null },
+        method: 'POST', body: { published_after: after || null, published_before: before || null,
+                                exclude_unrelated: targetBrandOnly },
       })
       setExportResult(r)
     } catch (e) {
@@ -72,6 +74,12 @@ export default function Export() {
           <label>Published before <input type="date" value={before} onChange={(e) => setBefore(e.target.value)} /></label>
           <button onClick={buildWorkbook} disabled={building}>{building ? 'Building…' : 'Build Excel workbook'}</button>
         </div>
+        <label style={{ fontWeight: 400, display: 'flex', gap: '.5rem', alignItems: 'center', margin: '.4rem 0' }}>
+          <input type="checkbox" checked={targetBrandOnly} style={{ width: 'auto' }}
+            onChange={(e) => setTargetBrandOnly(e.target.checked)} />
+          <span>Target brand only — drop <code>brand_focus=unrelated</code> rows from the raw
+            data tabs (All Items + per-channel), matching what the headline numbers already exclude</span>
+        </label>
         {exportResult && (
           <p>Built <b>{exportResult.filename}</b> —{' '}
             <a href={`/api/projects/${projectId}/export/download?path=${encodeURIComponent(exportResult.path)}`}>Download ↓</a></p>
@@ -79,7 +87,9 @@ export default function Export() {
         <div className="note">The Excel workbook is the client-facing artifact — it stamps the tool version
           and includes Methodology, Confidence, and Representativeness tabs (the honesty contract).
           It also has an <b>"All Items"</b> tab: every collected item across all channels in one sheet
-          (id, source, title, text, link, published, run_id + all analysis columns).</div>
+          (id, source, title, text, link, published, run_id + all analysis columns). Off by default,
+          "Target brand only" above narrows those raw tabs the same way the headline stats already
+          are — nothing is ever silently hidden unless you opt in.</div>
       </Card>
 
       <Card>

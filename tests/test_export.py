@@ -112,6 +112,56 @@ def test_export_surfaces_syndication_not_just_raw_count(fresh_db, tmp_path):
     assert sizes == [1, 2, 2]  # two reprints (size 2 each) + one standalone (size 1)
 
 
+def test_export_exclude_unrelated_drops_only_unrelated_rows_from_raw_tabs(fresh_db, tmp_path):
+    """HANDOFF §7 "target brand only" export filter: brand_focus='unrelated' rows are
+    everywhere else (analytics.py's headline stats) already excluded by default —
+    until this flag, the raw All Items/per-channel tabs never matched that, so a
+    client pivoting directly off the raw tab would see numbers analytics doesn't."""
+    from openpyxl import load_workbook
+
+    pid = storage.create_project("Filter Test", _cfg())
+    r = storage.start_run(pid, "news", {})
+    storage.save_items(pid, r, "news", [
+        {"title": "Acme Cola review", "text": "tasty", "link": "http://a", "published": "2026-01-01"},
+        {"title": "Unrelated weather story", "text": "rain today", "link": "http://b", "published": "2026-01-02"},
+    ])
+
+    def call(prompt, model):
+        import json
+        # Route by title so each item gets its real, distinct brand_focus tag.
+        return json.dumps([
+            {"sentiment": "positive", "sentiment_score": 0.5, "language": "en", "summary_en": "s",
+             "purchase_driver": "price", "trend_category": "x", "brand_focus": "target brand",
+             "promo_mentioned": False, "emotion": "joy"},
+            {"sentiment": "neutral", "sentiment_score": 0.0, "language": "en", "summary_en": "s",
+             "purchase_driver": "", "trend_category": "", "brand_focus": "unrelated",
+             "promo_mentioned": False, "emotion": "neutral"},
+        ])
+
+    analysis.analyze_all(pid, call_fn=call, model="test-model")
+
+    unfiltered = tmp_path / "unfiltered.xlsx"
+    export.build_workbook(pid, out_path=str(unfiltered))
+    wb = load_workbook(str(unfiltered))
+    assert wb["All Items"].max_row == 3  # header + 2 items -- unrelated included by default
+
+    filtered = tmp_path / "filtered.xlsx"
+    export.build_workbook(pid, exclude_unrelated=True, out_path=str(filtered))
+    wb2 = load_workbook(str(filtered))
+    assert wb2["All Items"].max_row == 2  # header + 1 item -- unrelated dropped
+    titles = [row[2] for row in wb2["All Items"].iter_rows(min_row=2, values_only=True)]
+    assert titles == ["Acme Cola review"]
+    # Per-channel tab (only "news" here) gets the same filter.
+    assert wb2["news"].max_row == 2
+
+    # Summary tab documents the choice honestly, in both directions.
+    def _summary_dict(wb):
+        return dict((r[0].value, r[1].value) for r in wb["Summary"].iter_rows() if r[0].value)
+
+    assert "None" in _summary_dict(wb)["Raw data tabs filter"]
+    assert "Target brand only" in _summary_dict(wb2)["Raw data tabs filter"]
+
+
 def test_cited_entry_requires_full_citation(fresh_db):
     pid = storage.create_project("P", _cfg())
     try:

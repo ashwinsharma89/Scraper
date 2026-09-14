@@ -269,6 +269,15 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   switch focus to the new one** — see §8's gotchas entry for the root cause
   (`AppState.loadProjects()`'s re-selection logic) and the fix (`selectProject()` called
   explicitly in both `NewStudyWizard.jsx` and `DiscoveryWizard/index.jsx`).
+- **"Target brand only" export filter** (HANDOFF §7) — `export.build_workbook(...,
+  exclude_unrelated=True)` drops `brand_focus == "unrelated"` rows from the raw data
+  tabs (All Items + per-channel), matching the same exclusion `analytics.py`'s headline
+  stats already apply by default (`_analyzed_rows(exclude_unrelated=True)`) — until now
+  that consistency only held for the aggregate numbers, not the raw rows a client might
+  pivot on directly. Off by default (nothing is ever silently hidden unless opted in);
+  the Summary tab documents which mode was used, in both directions. Wired through
+  `POST /api/projects/{id}/export`'s `exclude_unrelated` body field and a checkbox in
+  Export.jsx.
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
@@ -350,21 +359,18 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 ## 7. PENDING / SUGGESTED NEXT WORK (pick up here)
 
 Offered to the user but not yet built (in rough priority order):
-1. **"target brand only" export filter** (drop `brand_focus=unrelated` rows) — partially
-   superseded now: headline aggregates already exclude `unrelated` by default (§5.3); this
-   would just add an explicit toggle for the raw data tabs too.
-2. **Auto-suggest city/region market terms** to further reduce market-filter over-drop
+1. **Auto-suggest city/region market terms** to further reduce market-filter over-drop
    (demonyms are now automatic — §5.2 — but city/region-level terms still require the user
    to add them manually in Source plan, or come via ✨ Suggest sources).
-3. **PDF report export**; **per-tab description headers** in the Excel (self-documenting).
-4. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set — **no
+2. **PDF report export**; **per-tab description headers** in the Excel (self-documenting).
+3. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set — **no
    keys are configured in this environment's `.env`** (checked live), so this cannot be
    done from here; needs the user to supply real keys in their own `.env` (never pasted
    into chat — see §0's security note) and run it themselves, or hand it to a session
    that has them.
-5. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
+4. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
    (currently API + Excel Confidence tab only, no dedicated frontend chart yet).
-6. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
+5. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
    this sandbox again and confirmed the 429 is IP-level, not app-level: plain `curl` (no
    pytrends, no cookies) against `trends.google.com/trends/api/explore` returns 429 directly,
    while `trends.google.com/trends/` (homepage) returns 200 — so it's specifically this
