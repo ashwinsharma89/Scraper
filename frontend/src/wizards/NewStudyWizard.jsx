@@ -3,6 +3,7 @@ import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useToast } from '../components/Toast.jsx'
 import Modal from '../components/Modal.jsx'
+import SuggestSourcesPanel from '../components/SuggestSourcesPanel.jsx'
 import { useNavigate } from 'react-router-dom'
 
 // The original single-form intake wizard, ported field-for-field from
@@ -10,7 +11,7 @@ import { useNavigate } from 'react-router-dom'
 // wizard (DiscoveryWizard) is the newer, richer flow -- this one stays for a quick,
 // manually-specified study.
 export default function NewStudyWizard({ onClose }) {
-  const { loadProjects } = useAppState()
+  const { loadProjects, selectProject } = useAppState()
   const toast = useToast()
   const navigate = useNavigate()
 
@@ -30,6 +31,12 @@ export default function NewStudyWizard({ onClose }) {
   const [competitors, setCompetitors] = useState('')
   const [trendTerms, setTrendTerms] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // HANDOFF §7 item 1: "Suggested-RSS-feeds baked into the wizard per country" —
+  // once the study exists, offer the exact same ✨ Suggest sources → validate →
+  // confirm flow right here instead of requiring the user to remember Source plan
+  // afterward. Non-null once creation succeeds; its presence switches the modal to
+  // this second, final step.
+  const [createdProject, setCreatedProject] = useState(null)
 
   useEffect(() => {
     api('/api/reference/countries').then(setCountries).catch((e) => setCountriesError(e.message))
@@ -69,10 +76,15 @@ export default function NewStudyWizard({ onClose }) {
     setSubmitting(true)
     try {
       const r = await api('/api/projects/wizard', { method: 'POST', body: intake })
-      onClose()
-      toast(`Study "${r.name}" created — run Extensive research to populate it`)
+      // Real bug found live: loadProjects() alone keeps whatever project was ALREADY
+      // selected if it still exists in the list (it always does here) -- creating a
+      // new study while another was open silently left that OTHER study showing.
+      // selectProject() explicitly switches focus to the one just created, so the
+      // SuggestSourcesPanel step below (and the sidebar dropdown) both reflect it.
       await loadProjects()
-      navigate('/collect')
+      await selectProject(r.id)
+      toast(`Study "${r.name}" created`)
+      setCreatedProject(r) // switch to the post-creation "suggest sources" step, below
     } catch (err) {
       toast(err.message, true)
     } finally {
@@ -80,8 +92,28 @@ export default function NewStudyWizard({ onClose }) {
     }
   }
 
+  function finishAndGoToCollect() {
+    onClose()
+    navigate('/collect')
+  }
+
   const toggleMulti = (setter) => (e) =>
     setter([...e.target.selectedOptions].map((o) => o.value))
+
+  if (createdProject) {
+    return (
+      <Modal title="New study — intake wizard" onClose={finishAndGoToCollect}>
+        <p><b>"{createdProject.name}"</b> created. Optionally, let AI suggest real news RSS
+          feeds (+ e-commerce/forum candidates) for this market right now — each one is
+          validated (feed-health-checked / reachability-checked) before you confirm it,
+          exactly like Source plan's own ✨ Suggest sources.</p>
+        <SuggestSourcesPanel projectId={createdProject.id} onApplied={() => {}} />
+        <div className="actions">
+          <button type="button" onClick={finishAndGoToCollect}>Done — go to Collect</button>
+        </div>
+      </Modal>
+    )
+  }
 
   return (
     <Modal title="New study — intake wizard" onClose={onClose}>

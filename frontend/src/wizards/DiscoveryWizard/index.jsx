@@ -20,7 +20,7 @@ export default function DiscoveryWizard({ onClose }) {
   const [w, setW] = useState(initialWizardState())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const { loadProjects } = useAppState()
+  const { loadProjects, selectProject } = useAppState()
   const toast = useToast()
   const navigate = useNavigate()
 
@@ -39,7 +39,12 @@ export default function DiscoveryWizard({ onClose }) {
         onClose()
         toast(r.run_id ? `Study "${r.name}" launched — collection running in the background`
           : `Study "${r.name}" created`)
+        // Real bug found live: loadProjects() alone keeps whatever project was ALREADY
+        // selected if it still exists in the list (it always does here) -- creating a
+        // new study while another was open silently left that OTHER study showing.
+        // selectProject() explicitly switches focus to the one just created.
         await loadProjects()
+        await selectProject(r.project_id)
         navigate(r.run_id ? '/runlog' : '/collect')
       } catch (e) {
         setError(e.message)

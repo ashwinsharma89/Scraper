@@ -244,6 +244,31 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 - **One-click "add all validated" button** (Source plan → ✨ Suggested sources) — bulk-
   accepts every `valid !== false` News RSS + e-commerce candidate straight into the
   source plan, skipping the per-row checkbox review for when the suggestion list is long.
+- **Real-time in-run progress for News/GDELT jobs** (Collect stage) — job status was a
+  flat queued/running/done/error; a full-year Extensive run across many feeds could sit
+  on "running" for minutes. `jobs.py`'s job dict now carries an optional `progress`
+  ({current, total, label}); `scrapers/news.py`/`scrapers/gdelt.py`'s `collect()` gained
+  an optional, purely-additive `progress_cb` called after each feed x date-chunk, wired
+  through `jobs.run_collection()` only for channels whose signature accepts it
+  (introspected, not assumed — every other channel's call site is untouched). Surfaces
+  automatically (no API change) in the Collect tab's job table (fill-bar + step label)
+  and the topbar chip (`{channel} {pct}%`). Live-verified against a real full-year
+  Extensive news job on the demo project: watched 1/52 → 52/52 climb via direct polling
+  and in the browser, confirmed a real 86-item completion summary.
+- **Suggested-RSS-feeds baked into the wizard** (HANDOFF §7 item 1) — the same
+  ✨ Suggest sources → validate → confirm flow (extracted into
+  `frontend/src/components/SuggestSourcesPanel.jsx`, shared with Source plan) now runs
+  as an optional second step right after `NewStudyWizard.jsx` creates a study, instead
+  of requiring the user to remember Source plan afterward. Live-verified against a real
+  Vietnam study: real Claude-suggested RSS candidates, each independently feed-health-
+  checked (VietnamNet correctly flagged `HTTP 404 (autodiscovery failed)`, Thanh Niên
+  came back valid), added via "Add all validated" and confirmed persisted via a direct
+  API call. Finding this live also surfaced a real, independent, pre-existing bug (next
+  bullet) that would have silently defeated this whole feature.
+- **Real bug found + fixed: creating a study while another was already open didn't
+  switch focus to the new one** — see §8's gotchas entry for the root cause
+  (`AppState.loadProjects()`'s re-selection logic) and the fix (`selectProject()` called
+  explicitly in both `NewStudyWizard.jsx` and `DiscoveryWizard/index.jsx`).
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
@@ -325,25 +350,28 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 ## 7. PENDING / SUGGESTED NEXT WORK (pick up here)
 
 Offered to the user but not yet built (in rough priority order):
-1. **Suggested-RSS-feeds baked into the wizard** per country (still user-confirmed via health check).
-2. **"target brand only" export filter** (drop `brand_focus=unrelated` rows) — partially
+1. **"target brand only" export filter** (drop `brand_focus=unrelated` rows) — partially
    superseded now: headline aggregates already exclude `unrelated` by default (§5.3); this
    would just add an explicit toggle for the raw data tabs too.
-3. **Auto-suggest city/region market terms** to further reduce market-filter over-drop
+2. **Auto-suggest city/region market terms** to further reduce market-filter over-drop
    (demonyms are now automatic — §5.2 — but city/region-level terms still require the user
    to add them manually in Source plan, or come via ✨ Suggest sources).
-4. **PDF report export**; **per-tab description headers** in the Excel (self-documenting).
-5. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set.
-6. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
+3. **PDF report export**; **per-tab description headers** in the Excel (self-documenting).
+4. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set — **no
+   keys are configured in this environment's `.env`** (checked live), so this cannot be
+   done from here; needs the user to supply real keys in their own `.env` (never pasted
+   into chat — see §0's security note) and run it themselves, or hand it to a session
+   that has them.
+5. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
    (currently API + Excel Confidence tab only, no dedicated frontend chart yet).
-7. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
-    this sandbox again and confirmed the 429 is IP-level, not app-level: plain `curl` (no
-    pytrends, no cookies) against `trends.google.com/trends/api/explore` returns 429 directly,
-    while `trends.google.com/trends/` (homepage) returns 200 — so it's specifically this
-    sandbox IP being throttled by Google's Trends API backend, not a code issue. The
-    retry-wrapper fix itself re-verified correct (clean 2-retry/20s-backoff cadence, no crash,
-    honest error surfaced, no fabricated data). Nothing left to fix in code — only a fresh
-    IP or a long real-world cooldown can produce a live 200 here.
+6. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
+   this sandbox again and confirmed the 429 is IP-level, not app-level: plain `curl` (no
+   pytrends, no cookies) against `trends.google.com/trends/api/explore` returns 429 directly,
+   while `trends.google.com/trends/` (homepage) returns 200 — so it's specifically this
+   sandbox IP being throttled by Google's Trends API backend, not a code issue. The
+   retry-wrapper fix itself re-verified correct (clean 2-retry/20s-backoff cadence, no crash,
+   honest error surfaced, no fabricated data). Nothing left to fix in code — only a fresh
+   IP or a long real-world cooldown can produce a live 200 here; not actionable from here.
 
 ## 8. Gotchas discovered this session (save yourself the debugging)
 
@@ -361,6 +389,16 @@ Offered to the user but not yet built (in rough priority order):
   visually.
 - The in-app browser-preview tool had intermittent tab-click issues — that's a preview-pane
   artifact, **not** an app bug (tabs work fine in a real browser).
+- **Real bug, fixed live: creating a study while another was already open didn't switch
+  focus to the new one.** `AppState.loadProjects()` only re-selects when the CURRENTLY
+  selected project id no longer exists in the list — after creating a second study while
+  #1 was active, #1 still exists, so it silently kept showing #1's market/config while the
+  sidebar dropdown WAS updated to include the new one. Both `NewStudyWizard.jsx` and
+  `DiscoveryWizard/index.jsx` now call `selectProject(newId)` explicitly right after
+  creation, not just `loadProjects()`. No frontend test runner exists in this repo (Python
+  pytest only — `frontend/package.json` has no Jest/Vitest); verify any frontend logic
+  change live in the browser (create project #1, then #2, confirm the dropdown AND the
+  page content both reflect #2), the same way this bug was actually found.
 
 ## 9. Working conventions
 
