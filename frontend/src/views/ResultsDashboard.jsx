@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { BarChart3, Globe2, ShieldAlert, Sparkles } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
-import { Card, HelpBox, Stat } from '../components/Ui.jsx'
+import { Card, EmptyState, HelpBox, Skeleton, Stat } from '../components/Ui.jsx'
 
 export default function ResultsDashboard() {
   const { projectId } = useAppState()
@@ -24,18 +25,18 @@ export default function ResultsDashboard() {
   return (
     <>
       <HelpBox view="results" />
-      <Card><h3>Volume by channel</h3>
-        {!data ? <span className="muted">Loading…</span>
+      <Card><h3><BarChart3 size={16} className="title-icon" /> Volume by channel</h3>
+        {!data ? <Skeleton grid rows={3} />
           : data.byChannel.data.length ? (
             <div className="grid">
               {data.byChannel.data.map((c) => (
                 <Stat key={c.channel} lbl={c.channel} num={`${c.n} (${c.analyzed_n} analyzed)`} />
               ))}
             </div>
-          ) : <p className="muted">Nothing collected yet — run a channel from the Collect tab.</p>}
+          ) : <EmptyState title="Nothing collected yet" hint="Run a channel from the Collect tab." />}
       </Card>
 
-      <Card><h3>Top sites (generic-site discovery)</h3>
+      <Card><h3><Globe2 size={16} className="title-icon" /> Top sites (generic-site discovery)</h3>
         {data && (data.byDomain.domains.length ? (
           <div className="table-wrap"><table>
             <thead><tr><th>Domain</th><th>Items collected</th></tr></thead>
@@ -43,10 +44,10 @@ export default function ResultsDashboard() {
               <tr key={d.domain}><td>{d.domain}</td><td>{d.n}</td></tr>
             ))}</tbody>
           </table></div>
-        ) : <p className="muted">No generic-site items collected yet.</p>)}
+        ) : <EmptyState icon={Globe2} title="No generic-site items collected yet" />)}
       </Card>
 
-      <Card><h3>Access &amp; reliability</h3>
+      <Card><h3><ShieldAlert size={16} className="title-icon" /> Access &amp; reliability</h3>
         <p className="muted">Sources auto-paused after repeated failures — never retried
           forever, never silently dropped (DESIGN_01 §7.4).</p>
         {data && (data.health.length ? (
@@ -62,10 +63,10 @@ export default function ResultsDashboard() {
               </tr>
             ))}</tbody>
           </table></div>
-        ) : <p className="muted">No source-health history yet for this project.</p>)}
+        ) : <EmptyState icon={ShieldAlert} title="No source-health history yet" hint="Nothing recorded for this project so far." />)}
       </Card>
 
-      <Card><h3>Site intelligence — what this category has learned so far</h3>
+      <Card><h3><Sparkles size={16} className="title-icon" /> Site intelligence — what this category has learned so far</h3>
         <p className="muted">The cross-project ledger for "<b>{data?.ledger?.category || '(no category set)'}</b>":
           every real site any study has ever tried for this category, with its accumulated
           track record. This is the literal output of the learning mechanism (DESIGN_01 §4b)
@@ -86,9 +87,8 @@ export default function ResultsDashboard() {
               </tr>
             ))}</tbody>
           </table></div>
-        ) : <p className="muted">No sites in the ledger for this category yet — run the
-          AI-guided study wizard's site discovery step, or collect via the generic-site
-          pipeline first.</p>)}
+        ) : <EmptyState icon={Sparkles} title="No sites in the ledger for this category yet"
+          hint="Run the AI-guided study wizard's site discovery step, or collect via the generic-site pipeline first." />)}
       </Card>
     </>
   )

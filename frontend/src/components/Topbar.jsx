@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom'
+import { Loader2, Plus, Sparkles } from 'lucide-react'
 import { useAppState } from '../state/AppState.jsx'
 import { useJobs } from '../state/JobsState.jsx'
 
@@ -22,12 +23,13 @@ export default function Topbar({ onNewStudy, onNewDiscovery }) {
       </div>
       <div className="topbar-right">
         {activeCount > 0 && (
-          <button className="ghost" onClick={() => navigate('/collect')}>
-            ⏳ {activeCount} job{activeCount === 1 ? '' : 's'} running
+          <button className="ghost jobs-chip" onClick={() => navigate('/collect')}>
+            <Loader2 size={14} className="spin" />
+            {activeCount} job{activeCount === 1 ? '' : 's'} running
           </button>
         )}
-        <button className="ghost" onClick={onNewStudy}>+ New study</button>
-        <button onClick={onNewDiscovery}>✨ AI-guided study</button>
+        <button className="ghost" onClick={onNewStudy}><Plus size={15} /> New study</button>
+        <button onClick={onNewDiscovery}><Sparkles size={15} /> AI-guided study</button>
       </div>
     </header>
   )

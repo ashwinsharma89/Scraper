@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { CalendarClock } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Card, HelpBox } from '../components/Ui.jsx'
+import { Card, EmptyState, HelpBox } from '../components/Ui.jsx'
 
 export default function Schedules() {
   const { projectId, channels } = useAppState()
@@ -64,11 +65,13 @@ export default function Schedules() {
           <button type="submit">Add schedule</button>
         </form>
       </Card>
-      <Card><h3>Active schedules</h3>
+      <Card><h3><CalendarClock size={16} className="title-icon" /> Active schedules</h3>
+        {scheds.length === 0 ? (
+          <EmptyState icon={CalendarClock} title="No schedules yet" hint="Add one above to automate recurring collection." />
+        ) : (
         <div className="table-wrap"><table>
           <thead><tr><th>#</th><th>Channel</th><th>Every</th><th>Next run</th><th>Paused</th><th></th></tr></thead>
           <tbody>
-            {scheds.length === 0 && <tr><td colSpan={6} className="muted">No schedules.</td></tr>}
             {scheds.map((s) => (
               <tr key={s.id}>
                 <td>{s.id}</td><td>{s.channel}</td><td>{s.interval_seconds}s</td>
@@ -81,6 +84,7 @@ export default function Schedules() {
             ))}
           </tbody>
         </table></div>
+        )}
       </Card>
     </>
   )

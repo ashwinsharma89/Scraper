@@ -1,18 +1,22 @@
 import { NavLink } from 'react-router-dom'
+import {
+  LayoutDashboard, Compass, Download, ScrollText, BarChart3,
+  FileText, Brain, Landmark, ClipboardList, CalendarClock, FileOutput,
+} from 'lucide-react'
 import { useAppState } from '../state/AppState.jsx'
 
 const TABS = [
-  { to: '/overview', label: 'Overview' },
-  { to: '/sources', label: 'Source plan' },
-  { to: '/collect', label: 'Collect' },
-  { to: '/runlog', label: 'Run log' },
-  { to: '/results', label: 'Results dashboard' },
-  { to: '/items', label: 'Items' },
-  { to: '/analysis', label: 'Analysis' },
-  { to: '/intel', label: 'Market intel' },
-  { to: '/manual', label: 'Manual intel' },
-  { to: '/schedules', label: 'Schedules' },
-  { to: '/export', label: 'Export & report' },
+  { to: '/overview', label: 'Overview', icon: LayoutDashboard },
+  { to: '/sources', label: 'Source plan', icon: Compass },
+  { to: '/collect', label: 'Collect', icon: Download },
+  { to: '/runlog', label: 'Run log', icon: ScrollText },
+  { to: '/results', label: 'Results dashboard', icon: BarChart3 },
+  { to: '/items', label: 'Items', icon: FileText },
+  { to: '/analysis', label: 'Analysis', icon: Brain },
+  { to: '/intel', label: 'Market intel', icon: Landmark },
+  { to: '/manual', label: 'Manual intel', icon: ClipboardList },
+  { to: '/schedules', label: 'Schedules', icon: CalendarClock },
+  { to: '/export', label: 'Export & report', icon: FileOutput },
 ]
 
 export default function Sidebar() {
@@ -30,7 +34,8 @@ export default function Sidebar() {
       <nav className="tabs">
         {TABS.map((t) => (
           <NavLink key={t.to} to={t.to} className={({ isActive }) => (isActive ? 'active' : '')}>
-            {t.label}
+            <t.icon size={16} strokeWidth={2.1} />
+            <span>{t.label}</span>
           </NavLink>
         ))}
       </nav>

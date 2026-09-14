@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { Compass, Plus } from 'lucide-react'
 import { AppStateProvider, useAppState } from './state/AppState.jsx'
 import { JobsProvider } from './state/JobsState.jsx'
 import { ToastProvider } from './components/Toast.jsx'
@@ -85,6 +86,7 @@ function Shell() {
 function EmptyState({ onCreate }) {
   return (
     <div className="card empty-card">
+      <div className="welcome-mark"><Compass size={26} strokeWidth={1.8} /></div>
       <h2>Welcome to MarketLens</h2>
       <p>Create a study to begin. Nothing here is hard-coded to any brand, category, or
         market — every value comes from the intake wizard.</p>
@@ -92,7 +94,7 @@ function EmptyState({ onCreate }) {
         <b>1) Configure → 2) Collect → 3) Analyze → 4) Export.</b>{' '}
         Filling the source plan only says <i>where</i> to look; you still have to run
         Collect and Analyze before a report has anything in it.</p>
-      <button onClick={onCreate}>+ Create your first study</button>
+      <button onClick={onCreate}><Plus size={15} /> Create your first study</button>
     </div>
   )
 }

@@ -1,9 +1,10 @@
 import { useState } from 'react'
+import { AlertCircle, CheckCircle2, Clock, FlaskConical, Loader2, ListChecks } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState, CHREQ } from '../state/AppState.jsx'
 import { useJobs } from '../state/JobsState.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Card, HelpBox } from '../components/Ui.jsx'
+import { Card, EmptyState, HelpBox } from '../components/Ui.jsx'
 
 const EXT_CHANNELS = [
   { value: 'news', label: 'News (Google + Bing)', defaultOn: true },
@@ -14,10 +15,10 @@ const EXT_CHANNELS = [
 ]
 
 function statusBadge(status) {
-  if (status === 'running') return <span className="badge tier1">● running</span>
-  if (status === 'queued') return <span className="badge neu">queued</span>
-  if (status === 'error') return <span className="badge neg">error</span>
-  return <span className="badge pos">done</span>
+  if (status === 'running') return <span className="badge tier1"><Loader2 size={11} className="spin" /> running</span>
+  if (status === 'queued') return <span className="badge neu"><Clock size={11} /> queued</span>
+  if (status === 'error') return <span className="badge neg"><AlertCircle size={11} /> error</span>
+  return <span className="badge pos"><CheckCircle2 size={11} /> done</span>
 }
 
 export default function Collect() {
@@ -49,7 +50,7 @@ export default function Collect() {
         method: 'POST', body: { channels: list, year, market_only: marketOnly },
       })
       toast(`Extensive research queued: ${r.jobs.map((j) => j.channel).join(', ')} (${year})`)
-      setExtStatus(`Running ${list.length} channel(s) for ${year} — monthly chunks, this can take a few minutes. Watch "Recent jobs", or the ⏳ indicator in the top bar from any tab.`)
+      setExtStatus(`Running ${list.length} channel(s) for ${year} — monthly chunks, this can take a few minutes. Watch "Recent jobs", or the running-jobs indicator in the top bar from any tab.`)
       startWatching()
     } catch (e) {
       setExtStatus('')
@@ -72,7 +73,7 @@ export default function Collect() {
   return (
     <>
       <HelpBox view="collect" />
-      <Card title="🔬 Extensive research (one click)">
+      <Card title={<><FlaskConical size={17} strokeWidth={2.1} className="title-icon" /> Extensive research (one click)</>}>
         <p className="muted">Full-year, month-by-month collection across the chosen channels
           (monthly chunking beats Google News's ~100-results cap), market-filtered and
           de-duplicated. You pick the channels and year — this never auto-fires.</p>
@@ -128,23 +129,26 @@ export default function Collect() {
       </Card>
 
       <Card title="Recent jobs">
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>#</th><th>Channel</th><th>Status</th><th>By</th><th>New</th><th>Dup</th></tr></thead>
-            <tbody>
-              {jobs.length === 0 && <tr><td colSpan={6} className="muted">No jobs yet.</td></tr>}
-              {jobs.map((j) => {
-                const s = j.summary || {}
-                return (
-                  <tr key={j.id}>
-                    <td>{j.id}</td><td>{j.channel}</td><td>{statusBadge(j.status)}</td>
-                    <td>{j.triggered_by || ''}</td><td>{s.new ?? '—'}</td><td>{s.duplicate ?? '—'}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        {jobs.length === 0 ? (
+          <EmptyState icon={ListChecks} title="No jobs yet" hint="Run a channel above to see it tracked here." />
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Channel</th><th>Status</th><th>By</th><th>New</th><th>Dup</th></tr></thead>
+              <tbody>
+                {jobs.map((j) => {
+                  const s = j.summary || {}
+                  return (
+                    <tr key={j.id}>
+                      <td>{j.id}</td><td>{j.channel}</td><td>{statusBadge(j.status)}</td>
+                      <td>{j.triggered_by || ''}</td><td>{s.new ?? '—'}</td><td>{s.duplicate ?? '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </>
   )

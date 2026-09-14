@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { Database, FileCheck2, FileClock, Gauge, Languages } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useJobs } from '../state/JobsState.jsx'
-import { Card, HelpBox, Stat } from '../components/Ui.jsx'
+import { Card, HelpBox, Skeleton, Stat } from '../components/Ui.jsx'
 
 export default function Overview() {
   const { projectId, project } = useAppState()
@@ -34,17 +35,15 @@ export default function Overview() {
       </Card>
       <Card title={null}>
         <h3>Live snapshot</h3>
-        <div className="grid">
-          {dash ? (
-            <>
-              <Stat lbl="Total items" num={dash.total_items} />
-              <Stat lbl="Analyzed" num={dash.total_analyzed} />
-              <Stat lbl="Awaiting analysis" num={dash.unanalyzed} />
-              <Stat lbl="Net sentiment" num={dash.overall_net_score + (dash.low_confidence_overall ? ' ⚠' : '')} />
-              <Stat lbl="Languages seen" num={Object.keys(dash.language_breakdown || {}).join(', ') || '—'} />
-            </>
-          ) : <span className="muted">loading…</span>}
-        </div>
+        {dash ? (
+          <div className="grid">
+            <Stat lbl="Total items" num={dash.total_items} icon={Database} tone="primary" />
+            <Stat lbl="Analyzed" num={dash.total_analyzed} icon={FileCheck2} tone="good" />
+            <Stat lbl="Awaiting analysis" num={dash.unanalyzed} icon={FileClock} tone="warn" />
+            <Stat lbl="Net sentiment" num={dash.overall_net_score + (dash.low_confidence_overall ? ' ⚠' : '')} icon={Gauge} tone="primary" />
+            <Stat lbl="Languages seen" num={Object.keys(dash.language_breakdown || {}).join(', ') || '—'} icon={Languages} tone="primary" />
+          </div>
+        ) : <Skeleton grid rows={5} />}
       </Card>
       <Card title={null}>
         <h3>Segment applicability</h3>

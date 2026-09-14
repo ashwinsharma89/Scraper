@@ -1,6 +1,9 @@
 // Small, shared presentational pieces used across every view -- kept dependency-free
 // (no prop-types lib, no styling lib) to match the rest of this codebase's philosophy
-// of using only what's needed.
+// of using only what's needed. Icons are lucide-react throughout, for one consistent
+// icon language instead of ad hoc emoji (kept only where they already read as a
+// deliberate convention, e.g. ✨ for AI-assisted actions).
+import { Inbox } from 'lucide-react'
 
 export function Card({ title, headExtra, className = '', children }) {
   return (
@@ -16,9 +19,10 @@ export function Card({ title, headExtra, className = '', children }) {
   )
 }
 
-export function Stat({ lbl, num }) {
+export function Stat({ lbl, num, icon: Icon, tone = 'primary' }) {
   return (
     <div className="stat">
+      {Icon && <div className={`stat-icon tone-${tone}`}><Icon size={16} strokeWidth={2.2} /></div>}
       <div className="num">{num}</div>
       <div className="lbl">{lbl}</div>
     </div>
@@ -27,6 +31,36 @@ export function Stat({ lbl, num }) {
 
 export function Badge({ kind = 'neu', children }) {
   return <span className={`badge ${kind}`}>{children}</span>
+}
+
+// A single, consistent "nothing here yet" treatment instead of a bare <p class="muted">
+// scattered ad hoc per view -- this is exactly the kind of finishing touch that was
+// missing (real feedback: "too plain / not enough visual polish").
+export function EmptyState({ icon: Icon = Inbox, title, hint }) {
+  return (
+    <div className="empty-state">
+      <Icon size={28} strokeWidth={1.6} />
+      <div className="empty-title">{title}</div>
+      {hint && <div className="muted">{hint}</div>}
+    </div>
+  )
+}
+
+// Shimmering placeholder blocks instead of a plain "Loading…" line. `rows` renders
+// that many full-width lines; `grid` renders stat-tile-shaped blocks instead.
+export function Skeleton({ rows = 3, grid = false }) {
+  if (grid) {
+    return (
+      <div className="grid">
+        {Array.from({ length: rows }).map((_, i) => <div className="skeleton skeleton-tile" key={i} />)}
+      </div>
+    )
+  }
+  return (
+    <div className="skeleton-stack">
+      {Array.from({ length: rows }).map((_, i) => <div className="skeleton skeleton-line" key={i} />)}
+    </div>
+  )
 }
 
 const HELP = {

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { SearchX } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
-import { Card, HelpBox } from '../components/Ui.jsx'
+import { Card, EmptyState, HelpBox, Skeleton } from '../components/Ui.jsx'
 
 function sentimentBadge(s) {
   if (!s) return null
@@ -65,13 +66,14 @@ export default function Items() {
             </select>
           </label>
         </div>
-        <div className="table-wrap">
-          {!data ? <p className="muted">Loading…</p> : (
+        {!data ? <Skeleton rows={5} /> : data.rows.length === 0 ? (
+          <EmptyState icon={SearchX} title="No items match" hint="Collect data first, or loosen the filters." />
+        ) : (
+          <div className="table-wrap">
             <table>
               <thead><tr><th>#</th><th>Channel</th><th>Title</th><th>Sentiment</th><th>Lang</th>
                 <th>Brand focus</th><th>Driver</th><th>Summary (EN)</th></tr></thead>
               <tbody>
-                {data.rows.length === 0 && <tr><td colSpan={8} className="muted">No items match. Collect data first, or loosen the filters.</td></tr>}
                 {data.rows.map((r, i) => (
                   <tr key={i}>
                     <td>{i + 1}</td><td>{r.source}</td>
@@ -83,8 +85,8 @@ export default function Items() {
                 ))}
               </tbody>
             </table>
-          )}
-        </div>
+          </div>
+        )}
       </Card>
     </>
   )

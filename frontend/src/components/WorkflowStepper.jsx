@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { AlertTriangle, ArrowRight, Check, Settings2, Download, Brain, FileOutput } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useJobs } from '../state/JobsState.jsx'
+
+const STEP_ICONS = [Settings2, Download, Brain, FileOutput]
 
 // The four-step Configure -> Collect -> Analyze -> Export guide shown on every view.
 // Ported from static/app.js's renderWorkflow() -- re-fetches the dashboard whenever
@@ -55,18 +58,27 @@ export default function WorkflowStepper() {
 
   return (
     <div className="workflow">
-      {steps.map((s) => (
-        <div
-          key={s.view}
-          className={['step', s.done && 'done', s.current && 'current', s.warn && 'warn']
-            .filter(Boolean).join(' ')}
-          onClick={() => navigate(`/${s.view}`)}
-        >
-          <div><span className="step-n">{s.done ? '✓' : s.n}</span><span className="step-title">{s.title}</span></div>
-          <div className="step-sub">{s.sub}</div>
-          <div className="step-status">{s.status}</div>
-        </div>
-      ))}
+      {steps.map((s, i) => {
+        const StepIcon = STEP_ICONS[i]
+        return (
+          <div
+            key={s.view}
+            className={['step', s.done && 'done', s.current && 'current', s.warn && 'warn']
+              .filter(Boolean).join(' ')}
+            onClick={() => navigate(`/${s.view}`)}
+          >
+            <div className="step-head">
+              <span className="step-n">{s.done ? <Check size={13} strokeWidth={3} /> : <StepIcon size={13} strokeWidth={2.4} />}</span>
+              <span className="step-title">{s.title}</span>
+            </div>
+            <div className="step-sub">{s.sub}</div>
+            <div className="step-status">
+              {s.warn ? <AlertTriangle size={12} /> : s.done ? <Check size={12} /> : <ArrowRight size={12} />}
+              {s.status.replace(/^[✓→⚠]\s*/, '')}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

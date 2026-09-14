@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Card, HelpBox } from '../components/Ui.jsx'
+import { Card, HelpBox, Skeleton } from '../components/Ui.jsx'
 
 export default function Export() {
   const { projectId } = useAppState()
@@ -20,7 +21,7 @@ export default function Export() {
     api(`/api/projects/${projectId}/dashboard`).then(setDash)
   }, [projectId])
 
-  if (!dash) return <Card><span className="muted">Loading…</span></Card>
+  if (!dash) return <Card><Skeleton rows={3} /></Card>
 
   const nItems = dash.total_items || 0
   const nAnalyzed = dash.total_analyzed || 0
@@ -55,15 +56,15 @@ export default function Export() {
       <HelpBox view="export" />
       <Card title="Export & report">
         {nItems === 0 ? (
-          <div className="note">⚠ This study has <b>no collected items</b>. The workbook will be
+          <div className="note"><AlertTriangle size={14} /> This study has <b>no collected items</b>. The workbook will be
             almost empty. Do <b>Collect</b> (and then <b>Analyze</b>) first.</div>
         ) : nAnalyzed === 0 ? (
-          <div className="note">⚠ You've collected <b>{nItems}</b> items but <b>analyzed 0</b>.
+          <div className="note"><AlertTriangle size={14} /> You've collected <b>{nItems}</b> items but <b>analyzed 0</b>.
             The workbook will have raw item tabs + Run Log, but <b>no sentiment / summary / driver
             columns</b> and empty Analysis Summary. Run <b>Analyze all</b> first for a useful report.</div>
         ) : (
-          <div className="note" style={{ background: 'var(--good-soft)', borderColor: '#bfe3c2', color: '#215c26' }}>
-            ✓ Ready: <b>{nItems}</b> items collected, <b>{nAnalyzed}</b> analyzed.
+          <div className="note note-good">
+            <CheckCircle2 size={14} /> Ready: <b>{nItems}</b> items collected, <b>{nAnalyzed}</b> analyzed.
           </div>
         )}
         <div className="row">

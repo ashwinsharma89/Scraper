@@ -1,8 +1,9 @@
 import { useState } from 'react'
+import { Compass, Rss } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Card, HelpBox } from '../components/Ui.jsx'
+import { Card, EmptyState, HelpBox } from '../components/Ui.jsx'
 
 function ListEditor({ label, hint, value, onChange }) {
   return (
@@ -186,7 +187,7 @@ export default function SourcePlan() {
   return (
     <>
       <HelpBox view="sources" />
-      <Card title="Source plan"
+      <Card title={<><Compass size={17} className="title-icon" /> Source plan</>}
         headExtra={<div className="actions">
           <button className="ghost" onClick={suggestSources} disabled={suggesting}>
             {suggesting ? 'Asking Claude…' : '✨ Suggest sources (AI)'}
@@ -309,7 +310,7 @@ export default function SourcePlan() {
 
 function FeedTable({ feeds }) {
   if (!feeds?.length) {
-    return <p className="muted">No feeds — add native-language keyword terms below.</p>
+    return <EmptyState icon={Rss} title="No feeds yet" hint="Add native-language keyword terms below." />
   }
   return (
     <div className="table-wrap"><table>

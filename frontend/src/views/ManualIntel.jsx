@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { ClipboardList } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Card, HelpBox } from '../components/Ui.jsx'
+import { Card, EmptyState, HelpBox } from '../components/Ui.jsx'
 
 const emptyForm = { advertiser: '', platform: '', creative_theme: '', format: '', first_seen_date: '', source_url: '', notes: '' }
 
@@ -85,7 +86,7 @@ export default function ManualIntel() {
                 </tr>
               ))}</tbody>
             </table></div>
-          ) : <span className="muted">No observations yet.</span>}
+          ) : <EmptyState icon={ClipboardList} title="No observations yet" hint="Record one above after browsing a Tier-2 platform's deep links." />}
         </div>
       </Card>
 

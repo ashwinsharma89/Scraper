@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { Landmark } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Card, HelpBox } from '../components/Ui.jsx'
+import { Card, EmptyState, HelpBox } from '../components/Ui.jsx'
 
 const emptyForm = {
   category: '', metric: '', value: '', source_name: '', source_url: '',
@@ -74,11 +75,13 @@ export default function MarketIntel() {
           <button type="submit">Add cited entry</button>
         </form>
       </Card>
-      <Card><h3>Cited entries</h3>
+      <Card><h3><Landmark size={16} className="title-icon" /> Cited entries</h3>
+        {data.cited.length === 0 ? (
+          <EmptyState icon={Landmark} title="No cited entries yet" hint="Add one above with a full citation." />
+        ) : (
         <div className="table-wrap"><table>
           <thead><tr><th>Category</th><th>Metric</th><th>Value</th><th>Source</th><th>Pub</th><th>Conf</th><th>By</th><th></th></tr></thead>
           <tbody>
-            {data.cited.length === 0 && <tr><td colSpan={8} className="muted">No cited entries yet.</td></tr>}
             {data.cited.map((e) => (
               <tr key={e.id}>
                 <td>{e.category}</td><td>{e.metric}</td><td>{e.value}</td>
@@ -89,6 +92,7 @@ export default function MarketIntel() {
             ))}
           </tbody>
         </table></div>
+        )}
       </Card>
     </>
   )

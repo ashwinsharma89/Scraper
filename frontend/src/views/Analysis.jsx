@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { CheckCircle2, MessageSquareQuote, XCircle } from 'lucide-react'
 import { api } from '../api.js'
 import { useAppState } from '../state/AppState.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { Card, HelpBox } from '../components/Ui.jsx'
+import { Card, EmptyState, HelpBox, Skeleton } from '../components/Ui.jsx'
 
 function SentBar({ c }) {
   const n = c.n || 1
@@ -57,7 +58,7 @@ export default function Analysis() {
     }
   }
 
-  if (!dash) return <Card><span className="muted">Loading…</span></Card>
+  if (!dash) return <Card><Skeleton rows={3} /></Card>
 
   const hasKey = !!health?.keys?.anthropic
   const nItems = dash.total_items || 0
@@ -68,8 +69,8 @@ export default function Analysis() {
       <Card>
         <div className="card-head">
           <h2>Analysis {hasKey
-            ? <span className="keychip ok">✓ ANTHROPIC_API_KEY detected</span>
-            : <span className="keychip missing">⚠ ANTHROPIC_API_KEY not set</span>}</h2>
+            ? <span className="keychip ok"><CheckCircle2 size={11} /> ANTHROPIC_API_KEY detected</span>
+            : <span className="keychip missing"><XCircle size={11} /> ANTHROPIC_API_KEY not set</span>}</h2>
           <div className="actions">
             <button className="ghost" disabled={!nItems || running} onClick={() => doAnalyze('batch')}>Analyze one batch (12)</button>
             <button disabled={!nItems || !hasKey || running} onClick={() => doAnalyze('all')}>Analyze all</button>
@@ -136,7 +137,7 @@ export default function Analysis() {
               </div>
             ))}
           </div>
-        )) : <span className="muted">No verbatims yet.</span>)}
+        )) : <EmptyState icon={MessageSquareQuote} title="No verbatims yet" />)}
       </Card>
     </>
   )
