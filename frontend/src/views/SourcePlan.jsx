@@ -202,13 +202,27 @@ export default function SourcePlan() {
   async function doFindSitesForType(typeName) {
     setDiscoveringSitesFor(typeName)
     try {
+      // User feedback (follow-up to the bulk select-all fix): "still manual selection
+      // for sites which get added later" -- real gap the select-all button alone
+      // didn't close. Finding sites for a 2nd/3rd source type (or re-running "Find
+      // more sites" on the same one) merges in a NEW batch; previously only
+      // already-"known" sites in that batch auto-selected, so a user who'd already
+      // clicked Select all had to click it again for every subsequent batch, and
+      // needs-validation sites within a batch still needed individual clicks even
+      // then. Fix: if every site already on screen was checked (the user has
+      // expressed "give me everything" intent), extend that same intent to whatever
+      // shows up next -- including needs-validation ones, since the user already
+      // opted into trusting unverified sites once select-all was pressed. If the
+      // selection was ever partial/manual, behavior is unchanged (still-conservative
+      // known-only auto-select) -- this never overrides an intentionally partial pick.
+      const wasSelectAll = sites.length > 0 && sites.every((s) => selectedSiteDomains.has(s.domain))
       const r = await api(`/api/projects/${projectId}/discover-sites-for-type`,
         { method: 'POST', body: { source_type_hint: typeName } })
       const { merged, added } = mergeSites(sites, r.sites || [], typeName)
       setSites(merged)
       setSelectedSiteDomains((prev) => {
         const next = new Set(prev)
-        added.forEach((s) => { if (!s.needs_validation) next.add(s.domain) })
+        added.forEach((s) => { if (wasSelectAll || !s.needs_validation) next.add(s.domain) })
         return next
       })
     } catch (e) {

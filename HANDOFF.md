@@ -637,6 +637,27 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   update correctly together, using a real discovered-sites list (20 real Singapore
   F&B sites from the demo project's live "✨ Suggest source types" → "Find real sites"
   flow).
+- **Bulk select-all now "sticky" across later-discovered site batches** (immediate
+  follow-up user feedback on the fix above: "still manual selection for sites which
+  get added later"). Real gap the select-all button alone didn't close: finding sites
+  for a 2nd/3rd source type (or re-running "Find more sites" on the same one) merges
+  in a NEW batch of sites, and only already-"known" ones in that batch auto-selected —
+  a user who'd already clicked Select all had to click it again for every later batch,
+  and any needs-validation site within a batch still needed an individual click even
+  then. Fix in `SourcePlan.jsx`'s `doFindSitesForType()`: if every site already on
+  screen was checked at the moment a new discovery call is made (the user has
+  expressed "give me everything" intent), that intent now extends to whatever comes
+  back next — including needs-validation sites, since select-all already meant opting
+  into trusting unverified sites. If selection was ever partial/manual, behavior is
+  unchanged (still-conservative known-only auto-select for the new batch) — this never
+  silently overrides an intentionally partial pick. No backend change. Live-verified
+  both directions against the real running demo project (Acme Cola/Singapore),
+  reading actual DOM checkbox state, not just screenshots: (a) select-all on a 16-site
+  first batch, then find sites for a 2nd source type → all 22 sites end up checked
+  with zero further clicks; (b) same flow WITHOUT select-all first → a 14→19-site
+  second batch stays at 0 checked, confirming the original safety-conscious default
+  (unverified sites need explicit opt-in) is unchanged when the user hasn't asked for
+  everything. Full suite still green: 413 passed, 1 deselected.
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
