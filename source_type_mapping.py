@@ -31,7 +31,15 @@ _CHANNEL_KEYWORDS: Dict[str, List[str]] = {
     "news": ["news"],
     "reddit": ["reddit"],
     "forums": ["forum"],
-    "youtube": ["youtube", "video"],
+    # Bare "video" removed: a real bug found via Increment 9 generalization testing
+    # (electric scooters/Vietnam) -- "TikTok & short-form video platforms" matched
+    # "video" and routed to the YouTube channel, even though TikTok content has no
+    # YouTube Data API applicability at all, and "tiktok" itself is a genuine Tier-3
+    # keyword that this generic match was silently overriding (existing-channel checks
+    # run before Tier-3, per route_source_type). "video" alone is inherently ambiguous
+    # -- it could mean YouTube, TikTok, Instagram Reels, or Vimeo -- so only the
+    # unambiguous "youtube" keyword should claim this channel.
+    "youtube": ["youtube"],
     "trends": ["google trends", "search trend", "search interest"],
     "google_business": ["google business", "google review", "place review", "business review"],
     "quora": ["quora"],
@@ -47,8 +55,19 @@ _CHANNEL_KEYWORDS: Dict[str, List[str]] = {
 # messages). Silently routing them there wouldn't fabricate data, but it WOULD let a
 # wizard confirm a source type that can only ever silently find nothing — the honest
 # thing is to say so up front, not let the pipeline discover it the hard way.
+# A bare platform name, not a fixed phrase like "facebook group" -- found live via
+# Increment 9 generalization testing (skincare/Brazil): Layer 1 phrased it as
+# "Facebook beauty & skincare groups & communities", which "facebook group" as a
+# contiguous phrase never matches, so it silently fell through to
+# generic_site_discovery (a pipeline that can never work for a login-walled Facebook
+# group). Matching "facebook" alone, the same way instagram/whatsapp/telegram/tiktok
+# already do, catches every real phrasing Layer 1 produces. No regression risk: a
+# genuine existing-channel mention (e.g. "YouTube and Facebook video content") still
+# matches its channel keyword FIRST (channels are checked before Tier-3, see
+# route_source_type), so this can only ever narrow generic_site_discovery, never a
+# real channel.
 _TIER3_KEYWORDS: List[str] = [
-    "instagram", "whatsapp", "telegram", "tiktok", "facebook group", "facebook page",
+    "instagram", "whatsapp", "telegram", "tiktok", "facebook",
     "snapchat", "wechat", "line app",
 ]
 

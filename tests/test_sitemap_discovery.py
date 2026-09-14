@@ -32,6 +32,27 @@ PLAIN_URLSET = """<?xml version="1.0"?>
   <url><loc>https://example.com/b</loc></url>
 </urlset>"""
 
+# The exact real shape found live (Increment 9, thanhnien.vn/vietnamnet.vn): category
+# and utility sub-sitemaps (no lastmod) listed BEFORE the actual dated article
+# sub-sitemaps, in real document order.
+MIXED_ORDER_INDEX = """<?xml version="1.0"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://example.com/sitemaps/categories-sitemap.xml</loc></sitemap>
+  <sitemap><loc>https://example.com/google-news-sitemap.xml</loc></sitemap>
+  <sitemap><loc>https://example.com/sitemaps/old-2026-8-1-5.xml</loc><lastmod>2026-08-01</lastmod></sitemap>
+  <sitemap><loc>https://example.com/sitemaps/recent-2026-9-11-15.xml</loc><lastmod>2026-09-13</lastmod></sitemap>
+</sitemapindex>"""
+
+CATEGORIES_SITEMAP = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/category/coffee</loc></url>
+</urlset>"""
+
+RECENT_ARTICLES_SITEMAP = """<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/news/coffee-prices-surge</loc><lastmod>2026-09-13</lastmod></url>
+</urlset>"""
+
 
 def test_discover_urls_follows_one_level_of_sitemapindex_nesting():
     def fetch(url):
@@ -134,3 +155,49 @@ def test_discover_urls_one_dead_sub_sitemap_does_not_fail_the_whole_domain():
     r = sd.discover_urls("example.com", fetch_fn=fetch)
     assert r["ok"] is True
     assert r["_summary"]["raw_sitemap_urls"] == 1  # only the surviving sub-sitemap's entry
+
+
+def test_discover_urls_prioritizes_recent_sub_sitemaps_over_document_order():
+    """Real bug found live (Increment 9, electric scooters/Vietnam): thanhnien.vn's
+    real sitemap index lists category/utility sub-sitemaps (no lastmod) BEFORE the
+    actual dated article sub-sitemaps. Blindly following the first max_nested in
+    document order picked up category/utility pages instead of recent articles,
+    so real keyword matching against article URLs found nothing despite the site
+    genuinely having thousands of indexed pages. Sorting by lastmod (most recent
+    first, no-lastmod entries last) before truncating fixes this."""
+    def fetch(url):
+        if url == "https://example.com/sitemap.xml":
+            return _Resp(MIXED_ORDER_INDEX)
+        if "categories-sitemap" in url:
+            return _Resp(CATEGORIES_SITEMAP)
+        if "google-news-sitemap" in url:
+            return _Resp("", status=404)  # not every real site's google-news sitemap exists
+        if "recent-2026-9-11-15" in url:
+            return _Resp(RECENT_ARTICLES_SITEMAP)
+        if "old-2026-8-1-5" in url:
+            return _Resp("<urlset></urlset>")
+        return _Resp("", status=404)
+
+    r = sd.discover_urls("example.com", max_nested=2, fetch_fn=fetch)
+    assert r["ok"] is True
+    # With max_nested=2, sorting by recency should pick the dated "recent" sub-sitemap
+    # and one of the two no-lastmod ones (not both no-lastmod ones over the real one).
+    assert "https://example.com/news/coffee-prices-surge" in r["urls"]
+
+
+def test_parse_locs_with_lastmod_does_not_shift_lastmod_onto_the_wrong_loc():
+    """Real bug found live while writing the recency-sort regression test above: the
+    old parser extracted ALL <loc> values and ALL <lastmod> values as two flat lists
+    and zipped them by position. The instant SOME entries in a document have no
+    <lastmod> (exactly MIXED_ORDER_INDEX's real shape -- and thanhnien.vn's actual
+    sitemap index), every date after the first gap silently shifts onto the wrong
+    URL: e.g. the "categories" entry (no lastmod) was assigned the "old" entry's real
+    lastmod, and "old"/"recent" (which DO have lastmod) came out as None. Parsing each
+    <sitemap>/<url> block independently and matching <loc>/<lastmod> within that block
+    fixes this regardless of which entries carry a lastmod at all."""
+    entries = sd._parse_locs_with_lastmod(MIXED_ORDER_INDEX)
+    by_loc = {e["loc"]: e["lastmod"] for e in entries}
+    assert by_loc["https://example.com/sitemaps/categories-sitemap.xml"] is None
+    assert by_loc["https://example.com/google-news-sitemap.xml"] is None
+    assert by_loc["https://example.com/sitemaps/old-2026-8-1-5.xml"] == "2026-08-01"
+    assert by_loc["https://example.com/sitemaps/recent-2026-9-11-15.xml"] == "2026-09-13"

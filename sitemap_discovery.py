@@ -22,6 +22,8 @@ from typing import Any, Callable, Dict, List, Optional
 _LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.IGNORECASE)
 _LASTMOD_RE = re.compile(r"<lastmod>\s*([^<\s]+)\s*</lastmod>", re.IGNORECASE)
 _SITEMAPINDEX_RE = re.compile(r"<sitemapindex", re.IGNORECASE)
+_SITEMAP_ENTRY_RE = re.compile(r"<sitemap>(.*?)</sitemap>", re.IGNORECASE | re.DOTALL)
+_URL_ENTRY_RE = re.compile(r"<url>(.*?)</url>", re.IGNORECASE | re.DOTALL)
 
 # How many nested sub-sitemaps a sitemapindex is followed into. A real news/lifestyle
 # site can publish hundreds of daily/monthly sub-sitemaps going back years; this pilot
@@ -44,14 +46,29 @@ def _parse_locs_with_lastmod(xml_text: str) -> List[Dict[str, Optional[str]]]:
 
     A small regex parser, not a full XML parser, deliberately — sitemap XML is a
     simple, stable, externally-documented format, and this avoids a new XML-library
-    dependency for it. <lastmod> entries, when present, appear 1:1 with <loc> entries
-    in document order per the spec; a mismatch is tolerated honestly (lastmod left
-    None) rather than silently mis-pairing entries.
+    dependency for it.
+
+    Real bug found live (Increment 9, writing the regression test for the sub-sitemap
+    recency-sort fix): the previous version extracted ALL <loc> and ALL <lastmod>
+    values from the whole document as two flat lists and zipped them by position. That
+    silently mis-pairs entries the instant SOME entries in a document have <lastmod>
+    and others don't (exactly thanhnien.vn's real shape -- category/utility
+    sub-sitemaps have none, dated article sub-sitemaps do): an earlier entry with no
+    lastmod would steal a LATER entry's lastmod value instead of getting None, shifting
+    every date onto the wrong URL. Parsing <sitemap>...</sitemap> / <url>...</url> as
+    individual blocks and matching <loc>/<lastmod> WITHIN each block pairs them
+    correctly regardless of which entries have a lastmod at all.
     """
-    locs = _LOC_RE.findall(xml_text or "")
-    lastmods = _LASTMOD_RE.findall(xml_text or "")
-    return [{"loc": loc, "lastmod": lastmods[i] if i < len(lastmods) else None}
-            for i, loc in enumerate(locs)]
+    xml_text = xml_text or ""
+    blocks = _SITEMAP_ENTRY_RE.findall(xml_text) or _URL_ENTRY_RE.findall(xml_text)
+    entries: List[Dict[str, Optional[str]]] = []
+    for block in blocks:
+        loc_m = _LOC_RE.search(block)
+        if not loc_m:
+            continue
+        lastmod_m = _LASTMOD_RE.search(block)
+        entries.append({"loc": loc_m.group(1), "lastmod": lastmod_m.group(1) if lastmod_m else None})
+    return entries
 
 
 def discover_urls(domain: str, keywords: Optional[List[str]] = None, *,
@@ -89,6 +106,22 @@ def discover_urls(domain: str, keywords: Optional[List[str]] = None, *,
     entries = _parse_locs_with_lastmod(xml_text)
 
     if _SITEMAPINDEX_RE.search(xml_text):
+        # Sort by lastmod (most recent first) before truncating to max_nested, rather
+        # than trusting raw document order. Real gap found live (Increment 9,
+        # generalization testing on electric scooters/Vietnam): thanhnien.vn's real
+        # sitemap index lists categories-sitemap.xml, google-news-sitemap.xml, and
+        # latest-news-sitemap.xml BEFORE any dated article sub-sitemap -- taking the
+        # first 5 in document order followed category/utility pages instead of recent
+        # articles, so real keyword matching against article URLs found nothing at all
+        # despite the site genuinely having thousands of indexed pages. Entries with no
+        # lastmod (typically category/utility sitemaps, not date-based article
+        # listings) sort last, since there's no way to know how fresh their content is.
+        def _recency_key(e):
+            lm = e.get("lastmod")
+            return (1, lm) if lm else (0, "")
+
+        entries = sorted(entries, key=_recency_key, reverse=True)
+
         all_entries: List[Dict[str, Optional[str]]] = []
         for sub in entries[:max_nested]:
             try:

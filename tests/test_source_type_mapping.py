@@ -57,6 +57,39 @@ def test_route_source_type_pure_tier3_with_no_channel_mention_still_unsupported(
     assert stm.route_source_type("WhatsApp groups only")["strategy"] == "unsupported"
 
 
+def test_route_source_type_catches_facebook_phrased_as_a_full_sentence():
+    """Real gap found live via Increment 9 generalization testing (skincare/Brazil):
+    Layer 1 phrased it as "Facebook beauty & skincare groups & communities" -- the
+    old "facebook group" contiguous-phrase keyword never matches that, so it silently
+    fell through to generic_site_discovery, a pipeline that can never work for a
+    login-walled Facebook group. Matching bare "facebook" (like instagram/whatsapp/
+    telegram/tiktok already do) catches this and any other real phrasing."""
+    r = stm.route_source_type("Facebook beauty & skincare groups & communities")
+    assert r["strategy"] == "unsupported"
+
+
+def test_route_source_type_facebook_still_yields_to_a_real_channel_mention():
+    r = stm.route_source_type("YouTube and Facebook video content")
+    assert r == {"strategy": "existing_channel", "channel": "youtube"}
+
+
+def test_route_source_type_tiktok_is_not_misrouted_to_youtube_via_bare_video():
+    """Real bug found live via Increment 9 generalization testing (electric scooters/
+    Vietnam): "TikTok & short-form video platforms" matched the bare "video" keyword
+    and incorrectly routed to the YouTube channel -- YouTube's Data API has zero
+    applicability to TikTok content, and "tiktok" is itself a genuine Tier-3 keyword
+    that the generic "video" match was silently overriding."""
+    r = stm.route_source_type("TikTok & short-form video platforms")
+    assert r == {"strategy": "unsupported", "channel": None}
+
+
+def test_route_source_type_generic_video_mention_with_no_platform_name_is_generic_site():
+    """"video" alone, naming no platform at all, is genuinely ambiguous -- it must NOT
+    silently claim the youtube channel just because a category mentions video content."""
+    r = stm.route_source_type("Product video reviews and demos")
+    assert r["strategy"] == "generic_site_discovery"
+
+
 def test_suggest_source_types_routes_every_candidate():
     r = stm.suggest_source_types("coffee", call_fn=lambda p, m: LLM_JSON)
     by_name = {s["name"]: s for s in r["source_types"]}
