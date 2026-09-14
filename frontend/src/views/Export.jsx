@@ -97,11 +97,12 @@ export default function Export() {
           <div className="actions">
             <button className="ghost" onClick={genReport}>Generate / preview</button>
             <a className="dl-btn" href={`/api/projects/${projectId}/report/download?fmt=docx`}>Download Word (.docx)</a>
+            <a className="dl-btn" href={`/api/projects/${projectId}/report/download?fmt=pdf`}>Download PDF</a>
             <a className="dl-btn" href={`/api/projects/${projectId}/report/download?fmt=md`}>Download Markdown (.md)</a>
           </div>
         </div>
         <p className="muted">The report is a separate narrative deliverable — it is <b>not</b> a tab in the
-          Excel workbook. Download it here as Word or Markdown, or preview it below.</p>
+          Excel workbook. Download it here as Word, PDF, or Markdown, or preview it below.</p>
         <pre className="report">{report}</pre>
       </Card>
 

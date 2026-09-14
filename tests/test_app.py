@@ -423,6 +423,17 @@ def test_apply_outlets_adds_to_market_terms(client, monkeypatch):
     assert "NDTV" in r3.json()["config"]["market"]["market_terms"]
 
 
+def test_report_download_endpoint_serves_pdf(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    r = client.post("/api/projects/wizard", json=_intake())
+    pid = r.json()["id"]
+
+    r2 = client.get(f"/api/projects/{pid}/report/download?fmt=pdf")
+    assert r2.status_code == 200
+    assert r2.headers["content-type"] == "application/pdf"
+    assert r2.content.startswith(b"%PDF-")
+
+
 def test_suggest_market_terms_calls_geo_discovery_module(client, monkeypatch):
     monkeypatch.setenv("MODE", "solo")
     r = client.post("/api/projects/wizard", json=_intake())

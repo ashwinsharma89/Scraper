@@ -34,7 +34,7 @@ python seed_demo.py          # recreate the Acme Cola / Singapore demo
 pkill -f "app.py"; rm -rf data && python seed_demo.py
 ```
 If you hit `ModuleNotFoundError`, run `pip install -r requirements.txt` (the venv may lack
-heavy deps: anthropic, playwright, pytrends, Pillow, python-docx). Port 8000 busy →
+heavy deps: anthropic, playwright, pytrends, Pillow, python-docx, fpdf2). Port 8000 busy →
 `lsof -ti:8000 | xargs kill -9`.
 
 ## Frontend (React + Vite, `/frontend`)

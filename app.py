@@ -900,17 +900,20 @@ def api_report_draft(pid: int, user: str = Depends(require_user)):
 
 @app.get("/api/projects/{pid}/report/download")
 def api_report_download(pid: int, fmt: str = "md", user: str = Depends(require_user)):
-    """Download the report draft as Markdown (fmt=md) or Word (fmt=docx)."""
+    """Download the report draft as Markdown (fmt=md), Word (fmt=docx), or PDF (fmt=pdf)."""
     _project_or_404(pid)
     try:
         if fmt == "docx":
             path = report_mod.save_docx(pid)
             media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif fmt == "pdf":
+            path = report_mod.save_pdf(pid)
+            media = "application/pdf"
         else:
             path = report_mod.save_markdown(pid)
             media = "text/markdown"
     except ModuleNotFoundError as e:
-        raise HTTPException(status_code=501, detail=f"{e}. Install requirements: pip install python-docx")
+        raise HTTPException(status_code=501, detail=f"{e}. Install requirements: pip install -r requirements.txt")
     return FileResponse(str(path), filename=Path(path).name, media_type=media)
 
 

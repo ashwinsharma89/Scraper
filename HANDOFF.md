@@ -296,6 +296,29 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   Changi, Marina Bay, ... — each with a genuine category-specific "why," not generic
   biggest-cities filler), applied 2 of them, confirmed persisted via a direct API call,
   and confirmed the audit log correctly read "Added 2 city/region market term(s)."
+- **PDF report export + per-tab Excel description headers** (HANDOFF §7) —
+  `report.save_pdf()` renders the Markdown report via a small Markdown->HTML subset
+  (headings/bullets/bold/blockquote/hr — the exact fixed set `draft_report()` actually
+  emits, confirmed by inspection, not a general Markdown parser) + fpdf2's built-in
+  `write_html()`. **Real bug found live on the very first export attempt**: fpdf2's
+  default core "Helvetica" font only supports latin-1/cp1252 and crashed
+  (`FPDFUnicodeEncodingException`) on the report's OWN title line, which always
+  contains an em dash. Fixed by bundling DejaVu Sans (`fonts/`, Bitstream Vera
+  license — free to embed, see `fonts/DEJAVU_LICENSE.txt`) instead of a core font.
+  Accepted, honest scope limit: DejaVu Sans doesn't cover Devanagari/Tamil/Telugu/CJK
+  glyphs — not a real gap in practice, since `draft_report()` only ever renders
+  English text (`summary_en`) plus Latin-Extended names; native-script `text` fields
+  (`analytics.top_verbatims_per_theme()`) are never rendered raw. New `fmt=pdf` on
+  the existing `GET /api/projects/{id}/report/download` endpoint; a "Download PDF"
+  button in Export.jsx. Separately, `export._channel_data_tab()` now writes an
+  italic, wrapped description row above the column headers on every raw data tab —
+  "All Items" explains `story_group_size`; each per-channel tab reuses that
+  channel's real `CHANNEL_INFO` method/limitation text (the SAME copy the Collect
+  tab UI shows), so a tab opened on its own (detached from Methodology) still
+  documents itself, and can never silently drift out of sync with the UI's own
+  description. Live-verified: downloaded a real PDF from the running server
+  (correct em dash/⚠ rendering, real section headings), and confirmed both
+  description rows on a real built workbook.
 
 ## 6. KNOWN LIMITATIONS (honest constraints — do NOT try to "fix" by faking)
 
@@ -377,15 +400,14 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 ## 7. PENDING / SUGGESTED NEXT WORK (pick up here)
 
 Offered to the user but not yet built (in rough priority order):
-1. **PDF report export**; **per-tab description headers** in the Excel (self-documenting).
-2. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set — **no
+1. Real end-to-end validation with `YOUTUBE_API_KEY` / `GOOGLE_PLACES_API_KEY` set — **no
    keys are configured in this environment's `.env`** (checked live), so this cannot be
    done from here; needs the user to supply real keys in their own `.env` (never pasted
    into chat — see §0's security note) and run it themselves, or hand it to a session
    that has them.
-3. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
+2. Surface `relevance_recovery_stats()` and the Bing/Google split in the Analysis tab UI
    (currently API + Excel Confidence tab only, no dedicated frontend chart yet).
-4. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
+3. **Confirm Google Trends live** from a fresh IP or after a real cooldown (§6) — re-tested
    this sandbox again and confirmed the 429 is IP-level, not app-level: plain `curl` (no
    pytrends, no cookies) against `trends.google.com/trends/api/explore` returns 429 directly,
    while `trends.google.com/trends/` (homepage) returns 200 — so it's specifically this

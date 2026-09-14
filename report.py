@@ -141,7 +141,7 @@ def draft_report(project_id: int) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# File outputs (Markdown + Word)
+# File outputs (Markdown + Word + PDF)
 # --------------------------------------------------------------------------- #
 def _out_path(project_id: int, ext: str) -> str:
     from pathlib import Path
@@ -220,4 +220,108 @@ def save_docx(project_id: int, out_path: str = None) -> str:
 
     doc.save(path)
     storage.audit("report.export.docx", "report draft downloaded (Word)", project_id=project_id)
+    return path
+
+
+def _md_inline_to_html(text: str) -> str:
+    """Escape HTML-special characters, then restore **bold** as <b> tags. Escaping
+    first is safe here because escape() never touches literal asterisks."""
+    import html as _html
+
+    escaped = _html.escape(text)
+    parts = escaped.split("**")
+    return "".join(f"<b>{p}</b>" if i % 2 == 1 else p for i, p in enumerate(parts))
+
+
+def _markdown_to_simple_html(md: str) -> str:
+    """Convert the report's Markdown into the small HTML subset fpdf2's write_html()
+    understands (h1-h3, p, ul/li, b, hr). Deliberately minimal, not a general Markdown
+    parser — draft_report() only ever emits #/##/### headings, "- "/"* " bullets, "> "
+    block-quotes, "---" rules, **bold**, and plain lines (confirmed by inspection); a
+    general parser would be needless weight for a fixed, known output shape."""
+    out: List[str] = []
+    in_list = False
+
+    def _close_list():
+        nonlocal in_list
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+
+    for raw in md.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            _close_list()
+            continue
+        if line.startswith("### "):
+            _close_list()
+            out.append(f"<h3>{_md_inline_to_html(line[4:])}</h3>")
+        elif line.startswith("## "):
+            _close_list()
+            out.append(f"<h2>{_md_inline_to_html(line[3:])}</h2>")
+        elif line.startswith("# "):
+            _close_list()
+            out.append(f"<h1>{_md_inline_to_html(line[2:])}</h1>")
+        elif line.strip() == "---":
+            _close_list()
+            out.append("<hr>")
+        elif line.lstrip().startswith(("- ", "* ")):
+            if not in_list:
+                out.append("<ul>")
+                in_list = True
+            out.append(f"<li>{_md_inline_to_html(line.lstrip()[2:])}</li>")
+        elif line.startswith(">"):
+            _close_list()
+            out.append(f"<p><i>{_md_inline_to_html(line.lstrip('> ').strip())}</i></p>")
+        else:
+            _close_list()
+            out.append(f"<p>{_md_inline_to_html(line)}</p>")
+    _close_list()
+    return "\n".join(out)
+
+
+def save_pdf(project_id: int, out_path: str = None) -> str:
+    """Render the Markdown report into a PDF file, via the small Markdown->HTML
+    subset above + fpdf2's built-in write_html(). fpdf2 is pure Python (no system
+    libraries like a Cairo/Pango stack that a heavier HTML-to-PDF renderer would
+    need) and imported lazily here, matching every other optional export dependency
+    in this module (python-docx) and the rest of the tool's convention.
+
+    Uses a bundled DejaVu Sans (fonts/, Bitstream Vera license — see
+    fonts/DEJAVU_LICENSE.txt — free to embed/redistribute) instead of fpdf2's default
+    core "Helvetica" font: the core fonts only support latin-1/cp1252 and crash on
+    genuinely common report characters (an em dash in the title line, ⚠️ in the
+    low-confidence flag, an accented brand name like "Nescafé" — found live, this
+    crashed the very first real export attempt). DejaVu Sans doesn't cover every
+    script (no Devanagari/Tamil/Telugu/CJK glyphs) — an honest, accepted scope limit,
+    not a silent gap: draft_report() itself only ever emits English text plus
+    Latin-Extended names (every native-script field is deliberately summary_en'd or
+    dropped before it reaches the report — see analytics.top_verbatims_per_theme()'s
+    "text" field, which report.py never renders — so this covers everything the
+    report actually produces)."""
+    from pathlib import Path
+
+    from fpdf import FPDF
+
+    md = draft_report(project_id)
+    path = out_path or _out_path(project_id, "pdf")
+    html = _markdown_to_simple_html(md)
+
+    font_dir = Path(__file__).parent / "fonts"
+    pdf = FPDF(format="A4")
+    # Uncompressed content streams: a few KB bigger, but keeps the PDF's own text
+    # bytes greppable (directly, no PDF-parsing library) for both debugging and this
+    # module's own tests, and the report is small — the size trade-off is a non-issue.
+    pdf.set_compression(False)
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.add_font("DejaVu", "", str(font_dir / "DejaVuSans.ttf"))
+    pdf.add_font("DejaVu", "B", str(font_dir / "DejaVuSans-Bold.ttf"))
+    pdf.add_font("DejaVu", "I", str(font_dir / "DejaVuSans-Oblique.ttf"))
+    pdf.add_font("DejaVu", "BI", str(font_dir / "DejaVuSans-BoldOblique.ttf"))
+    pdf.set_font("DejaVu", size=11)
+    pdf.write_html(html)
+    pdf.output(path)
+
+    storage.audit("report.export.pdf", "report draft downloaded (PDF)", project_id=project_id)
     return path

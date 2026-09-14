@@ -24,6 +24,7 @@ Pillow>=10.0              # EXIF + image handling (lazy-imported)
 # --- Export ---
 openpyxl>=3.1
 python-docx>=1.1          # Word (.docx) report download
+fpdf2>=2.8                # PDF report download (lazy-imported, pure Python — no system libs)
 
 # --- Config ---
 pyyaml>=6.0

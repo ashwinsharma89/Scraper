@@ -42,8 +42,9 @@ def _styles():
     title_font = Font(bold=True, size=14, color="1F3864")
     wrap = Alignment(vertical="top", wrap_text=True)
     flag_fill = PatternFill("solid", fgColor="F8CBAD")  # low-confidence flag
+    note_font = Font(italic=True, size=9, color="595959")  # per-tab description row
     return {"header_fill": header_fill, "header_font": header_font, "title_font": title_font,
-            "wrap": wrap, "flag_fill": flag_fill}
+            "wrap": wrap, "flag_fill": flag_fill, "note_font": note_font}
 
 
 def _write_header(ws, headers, row=1, styles=None):
@@ -129,16 +130,27 @@ def build_workbook(project_id: int, published_after: Optional[str] = None,
     all_rows = _apply_brand_filter(
         _filter_dates(storage.items_with_analysis(project_id), published_after, published_before))
     if all_rows:
-        _channel_data_tab(wb.create_sheet("All Items"), _with_group_size(all_rows), styles)
+        _channel_data_tab(wb.create_sheet("All Items"), _with_group_size(all_rows), styles,
+                          description="Every collected item across every channel, one row per item, "
+                          "with analysis columns joined. story_group_size > 1 = this story was "
+                          "reprinted/syndicated across multiple outlets -- treat sentiment n-sizes as "
+                          "unique stories (see the Summary tab), not the raw item count in this sheet.")
 
-    # One data tab per channel that actually has items.
+    # One data tab per channel that actually has items. The tab's own real method/
+    # limitation text (CHANNEL_INFO, the SAME copy the Collect tab UI shows) is reused
+    # here rather than re-written, so this can never quietly drift out of sync with it.
     counts = storage.count_items_by_source(project_id)
     for channel in sorted(counts):
         rows = storage.items_with_analysis(project_id, source=channel)
         rows = _apply_brand_filter(_filter_dates(rows, published_after, published_before))
         if not rows:
             continue
-        _channel_data_tab(wb.create_sheet(_safe_sheet_name(channel)), _with_group_size(rows), styles)
+        info = CHANNEL_INFO.get(channel, {})
+        desc = info.get("method", "")
+        if info.get("limitation"):
+            desc = f"{desc} ⚠ {info['limitation']}" if desc else f"⚠ {info['limitation']}"
+        _channel_data_tab(wb.create_sheet(_safe_sheet_name(channel)), _with_group_size(rows), styles,
+                          description=desc)
 
     settings.ensure_dirs()
     if out_path is None:
@@ -447,10 +459,24 @@ def _run_log_tab(ws, project_id, styles):
     _autosize(ws)
 
 
-def _channel_data_tab(ws, rows, styles):
+def _channel_data_tab(ws, rows, styles, description: str = ""):
+    """HANDOFF §7: "per-tab description headers in the Excel (self-documenting)" — a
+    raw data tab opened on its own (detached from the Summary/Methodology tabs, e.g.
+    forwarded as a single sheet) previously carried no explanation of what it is or
+    what its channel actually does/misses. `description` (when given) is written as
+    an italic, wrapped row above the column headers; the header row and data both
+    shift down one row to make room, and freeze_panes moves with them."""
+    header_row = 1
+    if description:
+        ws.cell(row=1, column=1, value=description).font = styles["note_font"]
+        ws.cell(row=1, column=1).alignment = styles["wrap"]
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(DATA_COLUMNS))
+        ws.row_dimensions[1].height = 30
+        header_row = 2
+
     headers = [h for h, _ in DATA_COLUMNS]
-    _write_header(ws, headers, row=1, styles=styles)
-    r = 2
+    _write_header(ws, headers, row=header_row, styles=styles)
+    r = header_row + 1
     for row in rows:
         for col, (_, key) in enumerate(DATA_COLUMNS, start=1):
             val = row.get(key)
