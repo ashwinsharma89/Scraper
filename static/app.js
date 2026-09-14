@@ -2,7 +2,8 @@
 // MarketLens SPA — vanilla JS, no build step. Talks to the FastAPI /api surface.
 
 const State = { projectId: null, project: null, mode: "solo", user: null, view: "overview",
-                channels: null, health: null, dash: null };
+                channels: null, health: null, dash: null,
+                announcedJobs: new Set(), jobsWatcherPrimed: false };
 
 // Which channels are ready with no extra setup vs. what each one needs.
 const CHREQ = {
@@ -116,11 +117,15 @@ async function loadProjects() {
 el("project-select").addEventListener("change", (e) => selectProject(parseInt(e.target.value)));
 
 async function selectProject(pid) {
+  if (jobsWatcherTimer) { clearInterval(jobsWatcherTimer); jobsWatcherTimer = null; }
+  State.announcedJobs = new Set();
+  State.jobsWatcherPrimed = false;
   State.projectId = pid;
   State.project = await api(`/api/projects/${pid}`);
   if (!State.channels) State.channels = await api("/api/channels");
   render();
   renderWorkflow();
+  startJobsWatcher();  // picks up anything already running/queued for this project
 }
 
 // Wizard
@@ -666,9 +671,79 @@ async function runFeedHealth() {
 }
 
 // --------------------------------------------------------------------------- //
-// Collect
+// Collect + a global jobs watcher (visible from every tab, not just Collect —
+// multiple jobs (extensive research queues one per channel) previously only
+// updated a single "active-job" text span for whichever was polled LAST, and the
+// "Recent jobs" table itself only ever refreshed on page load or when a job
+// finished, so a queued/running job just sat there stale until you reloaded.)
 // --------------------------------------------------------------------------- //
-let jobPoll = null;
+let jobsWatcherTimer = null;
+
+function startJobsWatcher() {
+  if (jobsWatcherTimer) return;  // already watching
+  jobsWatcherTimer = setInterval(pollJobsOnce, 1500);
+  pollJobsOnce();  // don't wait a full tick for the first update
+}
+
+async function pollJobsOnce() {
+  if (!State.projectId) return;
+  let jobs;
+  try {
+    jobs = await api(`/api/projects/${State.projectId}/jobs`);
+  } catch (e) {
+    return;  // a transient fetch error shouldn't kill the watcher
+  }
+  const active = jobs.filter(j => j.status === "queued" || j.status === "running");
+
+  const chip = el("jobs-indicator");
+  if (active.length) {
+    chip.classList.remove("hidden");
+    chip.textContent = `⏳ ${active.length} job${active.length === 1 ? "" : "s"} running`;
+  } else {
+    chip.classList.add("hidden");
+  }
+
+  if (State.view === "collect") renderJobsTable(jobs);
+
+  // A job that just finished should flip the workflow stepper green and toast once.
+  // Skip toasting on the very first poll after opening a project — those "done" jobs
+  // already finished before we started watching, not just now.
+  const firstPoll = !State.jobsWatcherPrimed;
+  State.jobsWatcherPrimed = true;
+  for (const j of jobs) {
+    if ((j.status === "done" || j.status === "error") && !State.announcedJobs.has(j.id)) {
+      State.announcedJobs.add(j.id);
+      if (!firstPoll) {
+        const s = j.summary || {};
+        toast(`Job #${j.id} (${j.channel}) ${j.status}: +${s.new || 0} new / ${s.duplicate || 0} dup`,
+              j.status === "error");
+        renderWorkflow();
+      }
+    }
+  }
+
+  if (active.length === 0) { clearInterval(jobsWatcherTimer); jobsWatcherTimer = null; }
+}
+
+function renderJobsTable(jobs) {
+  const box = el("job-list");
+  if (!box) return;
+  const statusBadge = (status) => {
+    if (status === "running") return `<span class="badge tier1">● running</span>`;
+    if (status === "queued") return `<span class="badge neu">queued</span>`;
+    if (status === "error") return `<span class="badge neg">error</span>`;
+    return `<span class="badge pos">done</span>`;
+  };
+  box.innerHTML = `<div class="table-wrap"><table><thead><tr><th>#</th><th>Channel</th><th>Status</th>
+    <th>By</th><th>New</th><th>Dup</th></tr></thead><tbody>${jobs.map(j => {
+      const s = j.summary || {};
+      return `<tr><td>${j.id}</td><td>${esc(j.channel)}</td><td>${statusBadge(j.status)}</td>
+        <td>${esc(j.triggered_by||"")}</td><td>${s.new??"—"}</td><td>${s.duplicate??"—"}</td></tr>`;
+    }).join("") || `<tr><td colspan="6" class="muted">No jobs yet.</td></tr>`}</tbody></table></div>`;
+}
+
+el("jobs-indicator").addEventListener("click", () => switchView("collect"));
+
 async function viewCollect(root) {
   const info = State.channels.info;
   const mkt = (State.project.config.market || {});
@@ -696,8 +771,7 @@ async function viewCollect(root) {
     <div class="note">Forums/E-commerce only run if you've added their URLs in Source plan.
       Reddit/GDELT need network that isn't bot-blocked (works from a normal connection).</div>
   </div>
-  <div class="card"><div class="card-head"><h2>Collect a single channel</h2>
-    <span id="active-job" class="muted"></span></div>
+  <div class="card"><div class="card-head"><h2>Collect a single channel</h2></div>
     <label style="font-weight:600"><input type="checkbox" id="market-only" checked
         style="width:auto;margin-right:.4rem" />
       Restrict news to ${esc(mkt.country||'the target market')} (drop off-market items, e.g. other countries)</label>
@@ -724,7 +798,7 @@ async function viewCollect(root) {
   }).join("");
   list.querySelectorAll("[data-collect]").forEach(b => b.addEventListener("click", () => runCollect(b.dataset.collect)));
   el("run-extensive").addEventListener("click", runExtensive);
-  refreshJobs();
+  startJobsWatcher();
 }
 
 async function runExtensive() {
@@ -737,10 +811,8 @@ async function runExtensive() {
     const r = await api(`/api/projects/${State.projectId}/collect-extensive`, { method: "POST",
       body: { channels, year, market_only: mo } });
     toast(`Extensive research queued: ${r.jobs.map(j => j.channel).join(", ")} (${year})`);
-    el("ext-status").textContent = `Running ${channels.length} channel(s) for ${year} — monthly chunks, this can take a few minutes. Watch “Recent jobs”.`;
-    // Poll the last job so the stepper/jobs refresh as they finish.
-    r.jobs.forEach(j => pollJob(j.job_id));
-    refreshJobs();
+    el("ext-status").textContent = `Running ${channels.length} channel(s) for ${year} — monthly chunks, this can take a few minutes. Watch “Recent jobs”, or the ⏳ indicator in the top bar from any tab.`;
+    startJobsWatcher();
   } catch (e) { el("ext-status").textContent = ""; toast(e.message, true); }
 }
 
@@ -752,39 +824,8 @@ async function runCollect(channel) {
     if (channel === "news" && mo) params.market_only = mo.checked;
     const r = await api(`/api/projects/${State.projectId}/collect`, { method: "POST", body: { channel, params } });
     toast(`Queued ${channel} (job #${r.job_id})`);
-    pollJob(r.job_id);
-    refreshJobs();
+    startJobsWatcher();
   } catch (e) { toast(e.message, true); }
-}
-
-async function pollJob(jobId) {
-  if (jobPoll) clearInterval(jobPoll);
-  jobPoll = setInterval(async () => {
-    try {
-      const j = await api(`/api/jobs/${jobId}`);
-      const ab = el("active-job");
-      if (ab) ab.textContent = `job #${jobId}: ${j.status}`;
-      if (j.status === "done" || j.status === "error") {
-        clearInterval(jobPoll); jobPoll = null;
-        const s = j.summary || {};
-        toast(`Job #${jobId} ${j.status}: +${s.new||0} new / ${s.duplicate||0} dup`);
-        refreshJobs();
-        renderWorkflow();  // step 2 turns green once items land
-      }
-    } catch (e) { clearInterval(jobPoll); jobPoll = null; }
-  }, 1500);
-}
-
-async function refreshJobs() {
-  if (State.view !== "collect") return;
-  const jobs = await api(`/api/projects/${State.projectId}/jobs`);
-  const box = el("job-list"); if (!box) return;
-  box.innerHTML = `<div class="table-wrap"><table><thead><tr><th>#</th><th>Channel</th><th>Status</th>
-    <th>By</th><th>New</th><th>Dup</th></tr></thead><tbody>${jobs.map(j => {
-      const s = j.summary || {};
-      return `<tr><td>${j.id}</td><td>${esc(j.channel)}</td><td>${esc(j.status)}</td>
-        <td>${esc(j.triggered_by||"")}</td><td>${s.new??"—"}</td><td>${s.duplicate??"—"}</td></tr>`;
-    }).join("") || `<tr><td colspan="6" class="muted">No jobs yet.</td></tr>`}</tbody></table></div>`;
 }
 
 // --------------------------------------------------------------------------- //
