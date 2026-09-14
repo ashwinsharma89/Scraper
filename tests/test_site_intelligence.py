@@ -30,9 +30,57 @@ def test_parse_sites_strips_scheme_and_www():
     assert si.parse_sites(raw)[0]["domain"] == "example.com"
 
 
+def test_domain_of_does_not_corrupt_a_real_domain_starting_with_w():
+    """Real bug found live verifying the CAP raise against a real Claude call:
+    str.lstrip("www.") strips a SET of characters ('w' and '.'), not the literal
+    4-char prefix -- it silently ate the real leading "w" off "whiskaffair.com"
+    (a genuine site Claude suggested), corrupting it into "hiskaffair.com" on every
+    single request. Confirmed live before fixing, not just reasoned about."""
+    assert si._domain_of("https://whiskaffair.com/") == "whiskaffair.com"
+    assert si._domain_of("https://www.whiskaffair.com/") == "whiskaffair.com"
+    assert si._domain_of("www.example.com") == "example.com"
+    assert si._domain_of("wanderon.in") == "wanderon.in"  # another real "w..." site
+
+
 def test_parse_sites_empty_response_raises():
     try:
         si.parse_sites("")
+        assert False, "should have raised"
+    except ValueError:
+        pass
+
+
+def test_parse_sites_cap_raised_to_40():
+    """Real gap found live (user report: a single unconstrained LLM query returned
+    ~180 real Indian food/lifestyle sites; this tool's own CAP hard-limited every
+    call to 20 regardless of what the model could actually produce)."""
+    assert si.CAP == 40
+    raw = json.dumps({"sites": [
+        {"name": f"Site {i}", "domain": f"site{i}.example", "source_type": "lifestyle", "why": "x"}
+        for i in range(50)
+    ]})
+    sites = si.parse_sites(raw)
+    assert len(sites) == 40
+
+
+def test_parse_sites_salvages_complete_objects_from_a_truncated_response():
+    """Real risk raising CAP introduced: a bigger requested list means a bigger
+    response, means a real chance of hitting max_tokens mid-object. The old parser
+    raised and threw away every site, including the ones already fully generated
+    before the cutoff -- must salvage the complete ones instead (same fix already
+    proven live in outlet_discovery.py, now shared via json_salvage.py)."""
+    truncated = """{"sites": [
+        {"name": "NDTV Food", "domain": "food.ndtv.com", "source_type": "lifestyle", "why": "x"},
+        {"name": "Archana's Kitchen", "domain": "archanaskitchen.com", "source_type": "lifestyle", "why": "y"},
+        {"name": "Sanjeev Kapoor", "domain":"""
+    sites = si.parse_sites(truncated)
+    domains = [s["domain"] for s in sites]
+    assert domains == ["food.ndtv.com", "archanaskitchen.com"]  # the two complete ones survive
+
+
+def test_parse_sites_raises_only_when_nothing_can_be_salvaged():
+    try:
+        si.parse_sites('{"sites": [{"name": "X", "domain":')
         assert False, "should have raised"
     except ValueError:
         pass

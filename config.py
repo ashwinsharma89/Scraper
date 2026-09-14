@@ -8,6 +8,7 @@ intake the user provides; the wizard turns that intake into an editable ``config
 from __future__ import annotations
 
 import copy
+import re
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
@@ -393,12 +394,29 @@ def regenerate_news_feeds(cfg: Dict[str, Any]) -> Dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Subreddit / segment suggestions
 # --------------------------------------------------------------------------- #
-def suggest_subreddits(country_name: str, category_type: str) -> List[str]:
+def suggest_subreddits(country_name: str, category_type: str, category: str = "") -> List[str]:
     """Suggest *candidate* subreddits from country + category patterns.
 
     These are patterns the user confirms — never assumed to exist. No brand names.
+
+    Real bug found live (user report: "95% of reddit links are not useful. Why not
+    going into coffee related communities for india and discussion related to
+    coffee"): this function never looked at the actual category text at all — only
+    the broad category_type bucket ("fmcg_food" -> food/Cooking/grocery/snacks) and
+    the country name. For a "coffee" study, that produces r/india, r/food, r/Cooking,
+    ... and NEVER the single most obvious, real, active community for the topic:
+    r/Coffee (confirmed live — real, active subreddit, ~2M members). The category-
+    derived guess is put FIRST (highest confidence: a subreddit literally named after
+    the topic is far more likely to exist and be on-topic than a generic country/
+    category_type pattern) — Reddit subreddit names are alphanumeric-only, so
+    multi-word categories are joined with no separator (e.g. "electric scooters" ->
+    "electricscooters", itself a real subreddit), matching how compound-topic
+    subreddits are actually named in practice.
     """
     candidates: List[str] = []
+    cat_slug = re.sub(r"[^a-z0-9]", "", (category or "").strip().lower())
+    if cat_slug:
+        candidates.append(cat_slug)  # e.g. r/coffee -- the obvious, highest-value guess
     slug = (country_name or "").strip().lower().replace(" ", "")
     if slug:
         candidates.append(slug)  # e.g. r/singapore
@@ -535,7 +553,7 @@ def run_wizard(intake: Dict[str, Any]) -> Dict[str, Any]:
         "bing_news_feeds": build_bing_news_feeds(by_language, languages, iso),
         "gdelt": {"sourcecountry": country_info.get("gdelt", ""),
                   "needs_confirmation": country_info.get("needs_confirmation", "false")},
-        "subreddits": suggest_subreddits(country_info["name"], category_type),
+        "subreddits": suggest_subreddits(country_info["name"], category_type, category),
         "rss_feeds": [],           # user fills from local knowledge; feed-health-checked
         "ecommerce_urls": [],      # user fills: explicit product/category/search URLs
         "ecommerce_search": [],    # user fills: search-URL templates with {q}, e.g.
@@ -725,7 +743,7 @@ def update_settings(config: Dict[str, Any], market: Dict[str, Any], product: Dic
     sp["gdelt"] = {"sourcecountry": country_info.get("gdelt", ""),
                   "needs_confirmation": country_info.get("needs_confirmation", "false")}
     sp["subreddits"] = _merge_preserving_order(sp.get("subreddits", []),
-                                               suggest_subreddits(country_info["name"], category_type))
+                                               suggest_subreddits(country_info["name"], category_type, category))
     sp["youtube"] = {"region_code": iso, "relevance_language": languages[0] if languages else "en"}
     sp["google_business"] = {"query": f"{brand} {country_info['name']}".strip() if brand else ""}
     sp["segments"] = segment_applicability(category_type)

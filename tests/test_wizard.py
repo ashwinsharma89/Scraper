@@ -324,3 +324,49 @@ def test_wizard_category_only_no_brand():
     assert cfg["source_plan"]["google_business"]["query"] == ""
     # Trends still gets keywords (falls back to relevance_terms when no trend-specific ones apply).
     assert cfg["source_plan"]["trends"]["keywords"] == ["spicy"]
+
+
+def test_suggest_subreddits_leads_with_the_category_itself():
+    """Real bug found live (user report: "95% of reddit links are not useful. Why not
+    going into coffee related communities for india"): the old version never looked
+    at the actual category text at all -- only the broad category_type bucket
+    ("fmcg_food" -> food/Cooking/grocery/snacks) and the country name, so a coffee
+    study never got r/Coffee (a real, active, ~2M-member subreddit, confirmed live)
+    suggested at all. The category-derived guess must come first (highest-confidence
+    candidate)."""
+    out = config.suggest_subreddits("India", "fmcg_food", "coffee")
+    assert out[0] == "coffee"
+    assert "india" in out and "food" in out  # existing country/category_type patterns still present
+
+
+def test_suggest_subreddits_category_slug_strips_spaces_and_punctuation():
+    """Reddit subreddit names are alphanumeric-only -- a multi-word category must
+    still produce a single, real-looking candidate (e.g. r/electricscooters, itself
+    a real subreddit), not something with spaces that could never be a valid name."""
+    out = config.suggest_subreddits("Vietnam", "other", "Electric Scooters!")
+    assert out[0] == "electricscooters"
+
+
+def test_suggest_subreddits_with_no_category_behaves_exactly_as_before():
+    """Purely additive -- omitting category (every pre-existing call site before
+    this fix) must not change behavior."""
+    out = config.suggest_subreddits("India", "fmcg_food")
+    assert out == ["india", "indiafire", "food", "Cooking", "grocery", "snacks"]
+
+
+def test_suggest_subreddits_dedupes_category_against_existing_patterns():
+    """If the category text happens to already match a country/category_type
+    pattern, it must not appear twice."""
+    out = config.suggest_subreddits("India", "fmcg_food", "food")
+    assert out.count("food") == 1
+
+
+def test_wizard_subreddits_include_the_category_via_run_wizard():
+    """End-to-end: run_wizard() actually passes the category through, not just the
+    unit function in isolation."""
+    intake = {
+        "market": {"country": "India", "languages": ["en"]},
+        "product": {"brand": "", "category": "coffee", "category_type": "fmcg_food"},
+    }
+    cfg = config.run_wizard(intake)
+    assert cfg["source_plan"]["subreddits"][0] == "coffee"

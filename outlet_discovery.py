@@ -83,65 +83,6 @@ def _looks_risky(name: str) -> bool:
     return bool(n) and " " not in n and len(n) <= CAUTION_LENGTH
 
 
-def _extract_balanced_objects(text: str) -> List[Dict[str, Any]]:
-    """Try every '{' in the text as a possible object start and parse the substring up to
-    its own matching '}', skipping any that fail. Used as a fallback when the whole
-    response isn't valid JSON (e.g. cut off mid-object by a max_tokens limit) — this
-    salvages every outlet that WAS completed before the cutoff instead of discarding all
-    of them over one incomplete trailing object.
-
-    Deliberately does NOT track depth globally from the start of the text — the very
-    first '{' is the OUTER {"outlets": [...]} wrapper, which never closes in a truncated
-    response, so a single global depth counter never returns to 0 and finds nothing
-    (confirmed live: an earlier version of this function had exactly that bug and
-    silently extracted zero objects from a genuinely-salvageable response). Instead, each
-    '{' gets its OWN independent attempt at finding a match; one that runs off the end of
-    the text without closing is simply skipped, and the next '{' (e.g. the first real
-    outlet object) is tried on its own terms.
-    """
-    objects: List[Dict[str, Any]] = []
-    n = len(text)
-    i = 0
-    while i < n:
-        if text[i] != "{":
-            i += 1
-            continue
-        depth = 0
-        in_string = False
-        escape = False
-        closed_at = None
-        j = i
-        while j < n:
-            ch = text[j]
-            if in_string:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_string = False
-            else:
-                if ch == '"':
-                    in_string = True
-                elif ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        closed_at = j
-                        break
-            j += 1
-        if closed_at is not None:
-            try:
-                obj = json.loads(text[i:closed_at + 1])
-                if isinstance(obj, dict) and "name" in obj:
-                    objects.append(obj)
-            except json.JSONDecodeError:
-                pass  # malformed candidate — skip, don't fail the whole batch over it
-        i += 1  # advance by 1, not past the close — lets a nested '{' be tried too
-    return objects
-
-
 def parse_outlets(text: str) -> Dict[str, Any]:
     if not text:
         raise ValueError("Empty model response")
@@ -156,7 +97,8 @@ def parse_outlets(text: str) -> Dict[str, Any]:
     except json.JSONDecodeError:
         # Whole response isn't valid JSON — most commonly a max_tokens cutoff mid-object.
         # Salvage whatever complete outlet objects exist rather than losing all of them.
-        raw_outlets = _extract_balanced_objects(text)
+        from json_salvage import extract_balanced_objects
+        raw_outlets = extract_balanced_objects(text)
         if not raw_outlets:
             raise ValueError("Model response was not valid JSON and no outlet objects "
                              "could be salvaged from it")

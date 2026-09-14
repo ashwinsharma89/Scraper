@@ -57,6 +57,7 @@ export default function SourcePlan() {
   const [discoveringSitesFor, setDiscoveringSitesFor] = useState(null) // source-type name, or null
   const [selectedSiteDomains, setSelectedSiteDomains] = useState(new Set())
   const [launchingCollect, setLaunchingCollect] = useState(false)
+  const [pastedSites, setPastedSites] = useState('')
 
   async function saveSources() {
     const newCfg = structuredClone(cfg)
@@ -225,6 +226,51 @@ export default function SourcePlan() {
     })
   }
 
+  // "Also, search within these sites?" (user report, with a pasted ~180-real-site
+  // list) — the fastest, most direct way to use a list a user already compiled
+  // themselves (own research, ChatGPT, wherever) instead of waiting on a re-tuned AI
+  // call to imperfectly rediscover a subset of it. One real URL/domain per line;
+  // rows copy-pasted straight from a spreadsheet/table (name + URL + category
+  // columns) work too — only the first real URL (or a bare domain) on each line is
+  // used. Feeds the exact same checkbox-confirm-collect flow as AI-suggested sites.
+  function parsePastedSites(text) {
+    const seen = new Set()
+    const out = []
+    for (const raw of text.split('\n')) {
+      const line = raw.trim()
+      if (!line) continue
+      const urlMatch = line.match(/https?:\/\/\S+/)
+      let domain = '', name = ''
+      if (urlMatch) {
+        try { domain = new URL(urlMatch[0]).hostname.replace(/^www\./, '') } catch { /* skip */ }
+        name = line.slice(0, urlMatch.index).trim().replace(/[\t|,]+$/, '') || domain
+      } else {
+        const bare = line.split(/\s+/)[0].replace(/^www\./, '')
+        if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(bare)) { domain = bare; name = domain }
+      }
+      if (domain && !seen.has(domain)) {
+        seen.add(domain)
+        out.push({ name, domain, source_type: 'manual', why: '', known: false, times_used: 0,
+                  confidence: null, validated_by_human: false, needs_validation: true })
+      }
+    }
+    return out
+  }
+
+  function addPastedSites() {
+    const parsed = parsePastedSites(pastedSites)
+    if (!parsed.length) { toast('No real URLs/domains found in the pasted text', true); return }
+    const { merged, added } = mergeSites(sites, parsed, 'Manually added')
+    setSites(merged)
+    setSelectedSiteDomains((prev) => {
+      const next = new Set(prev)
+      added.forEach((s) => next.add(s.domain))
+      return next
+    })
+    setPastedSites('')
+    toast(`Added ${added.length} site(s) from your list — review below, then click Collect.`)
+  }
+
   async function doConfirmSitesAndCollect() {
     const domains = [...selectedSiteDomains]
     if (!domains.length) { toast('Check at least one site first', true); return }
@@ -389,6 +435,15 @@ export default function SourcePlan() {
           <SourceTypeResults r={sourceTypes} sites={sites} discoveringFor={discoveringSitesFor}
             onFindSites={doFindSitesForType} />
         )}
+        <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '.8rem 0' }} />
+        <label>Or paste your own real sites — one URL or domain per line
+          <span className="muted"> (rows copied straight from a spreadsheet/table work too)</span>
+          <textarea rows={4} value={pastedSites} onChange={(e) => setPastedSites(e.target.value)}
+            placeholder={'NDTV Food\thttps://food.ndtv.com/\nArchana\'s Kitchen\thttps://www.archanaskitchen.com/'} />
+        </label>
+        <div className="actions" style={{ marginTop: '.4rem' }}>
+          <button className="ghost" onClick={addPastedSites} disabled={!pastedSites.trim()}>Add these sites</button>
+        </div>
         {!!sites.length && (
           <SiteResults sites={sites} checked={selectedSiteDomains} onToggle={toggleSite}
             onConfirm={doConfirmSitesAndCollect} launching={launchingCollect} />

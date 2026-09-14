@@ -412,6 +412,67 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
   redirects, i.e. a genuine site limitation, correctly reported rather than
   fabricated. Throwaway project + its `site_intelligence` ledger rows cleaned up
   afterward.
+- **Real bug found + fixed (user report: "95% of reddit links are not useful. Why
+  not going into coffee related communities for india").** Root cause
+  (`config.suggest_subreddits()`): the wizard-time subreddit default NEVER looked at
+  the actual category text at all — only the broad `category_type` bucket
+  ("fmcg_food" -> food/Cooking/grocery/snacks) and the country name — so a coffee
+  study never got r/Coffee suggested (confirmed live: real, active, ~2M-member
+  subreddit) at all, only generic country/category-type patterns. Fixed: the
+  category itself (alphanumeric-slugged, e.g. "coffee" -> "coffee", "electric
+  scooters" -> "electricscooters") is now the FIRST, highest-confidence candidate,
+  passed through from both `run_wizard()` and `update_settings()`. 5 new tests.
+  Live-verified end-to-end: a fresh India/coffee project's subreddits now lead with
+  `["coffee", "india", ...]`; running a real Reddit collect against it (combined
+  with the earlier relevance-filter fix, input #2) returned 141 items, **94 of them
+  (67%) from r/coffee alone** — a dramatic, real improvement from the original
+  "0/99 relevant" complaint.
+- **Real gap found + fixed (user report, with a pasted ~180-site real list): "why
+  you are not able to find out these are relevant sources... also, search within
+  these sites?").** Two real issues, both fixed:
+  1. `site_intelligence.py`'s `discover_sites()` CAP was hard-limited to 20 — a
+     single unconstrained LLM query the user ran elsewhere returned ~180 real,
+     correct Indian food/lifestyle sites; this tool's own prompt was capping every
+     call at 20 regardless of what the model could actually produce. Raised to 40
+     (a meaningful jump, not the full ~180 — a bigger single-call list degrades an
+     LLM's "REAL, well-known" confidence toward its tail, and every candidate is
+     still independently reachability-probed before being trusted either way) with
+     `MAX_TOKENS` scaled to 5000 to match. Since a bigger requested list is a real
+     truncation risk, `parse_sites()` gained the SAME truncation-salvage fallback
+     `outlet_discovery.py` already proved live — extracted into a new shared
+     `json_salvage.py` (`extract_balanced_objects()`) so both modules share one
+     implementation instead of two copies to keep in sync; `outlet_discovery.py`
+     refactored to use it too.
+  2. **A second, independent real bug found live while verifying the CAP raise
+     against an actual Claude call**: `site_intelligence._domain_of()` used
+     `s.lstrip("www.")` — a classic Python gotcha, `str.lstrip(chars)` strips a SET
+     of characters ('w' and '.'), not the literal 4-char prefix. It silently ate
+     the real leading "w" off any domain that legitimately starts with one right
+     where "www." would be — confirmed live: a real site Claude suggested, "Whisk
+     Affair" (whiskaffair.com), was corrupted into "hiskaffair.com" on every single
+     request. Fixed with a proper `startswith()`+slice, matching the correct
+     pattern `analytics.py`'s `items_by_domain()` already used elsewhere in this
+     same codebase. Dedicated regression test using the exact real domain that
+     exposed it.
+  3. Also added: a "paste your own real sites" textarea in the Source Plan
+     discovery card — the fastest way to use a list a user already compiled
+     themselves (own research, ChatGPT, wherever) instead of waiting on a re-tuned
+     AI call to imperfectly rediscover a subset of it. Parses one URL/domain per
+     line, including rows copy-pasted straight from a spreadsheet/table (name + URL
+     + category columns) — only the first real URL (or a bare domain) on each line
+     is used — and feeds the exact same checkbox-confirm-collect flow as
+     AI-suggested sites.
+
+  10 new tests (CAP, salvage-parsing, the domain-corruption regression, the shared
+  `json_salvage` module). Full suite: 409 passed. Live-verified end-to-end: pasted 5
+  real rows straight from the user's own list (NDTV Food, Archana's Kitchen, Sanjeev
+  Kapoor, Curly Tales, Homegrown) into the browser exactly as copied from a table —
+  all 5 domains parsed correctly (including the apostrophe in "Archana's Kitchen"),
+  confirmed, and launched as a real collection job: **5/5 sites reachable, 12,523
+  raw sitemap URLs found, 56 new genuinely coffee-relevant items extracted with 0
+  blocked/dropped** — real Indian coffee content (Karnataka-style filter coffee,
+  jaggery coffee, Chukku Kaapi/dry ginger coffee, even a Hindi-titled recipe).
+  Throwaway project + ledger rows cleaned up afterward.
 - **Suggested-RSS-feeds baked into the wizard** (HANDOFF §7 item 1) — the same
   ✨ Suggest sources → validate → confirm flow (extracted into
   `frontend/src/components/SuggestSourcesPanel.jsx`, shared with Source plan) now runs

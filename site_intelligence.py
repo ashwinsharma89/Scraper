@@ -32,7 +32,18 @@ import json
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
-CAP = 20
+CAP = 40
+# Real gap found live (user report: a single unconstrained LLM query returned ~180 real,
+# correct Indian food/lifestyle sites; this tool's own CAP was hard-limiting every call
+# to 20, regardless of what the model could actually produce). Raised to 40 — a
+# meaningful jump, not the full ~180: the larger a single-call list gets, the more an
+# LLM's confidence in "REAL, well-known" degrades toward its tail, and every candidate
+# here is still independently reachability-probed before being trusted either way (see
+# app.py's /api/discovery/sites), so a wrong domain from a larger list is caught, not
+# silently trusted. 40 sites x ~110-130 tokens/object (name+domain+source_type+why+JSON
+# punctuation) sized MAX_TOKENS below with real headroom, same sizing math
+# outlet_discovery.py already validated live for its own CAP raise.
+MAX_TOKENS = 5000
 # A domain with fewer real uses than this is shown with its track record but still flagged
 # needs_validation — a couple of lucky/unlucky runs isn't enough history to fully trust yet.
 MIN_USES_TO_AUTO_TRUST = 3
@@ -40,10 +51,20 @@ MIN_CONFIDENCE_TO_AUTO_TRUST = 0.5
 
 
 def _domain_of(url_or_domain: str) -> str:
+    """Real bug found live (discovered verifying the CAP raise above against a real
+    Claude call): str.lstrip("www.") strips a SET of characters ('w' and '.'), not
+    the literal 4-char prefix -- it silently ate the real leading "w" off domains
+    that legitimately start with one right where "www." would be (confirmed live:
+    "whiskaffair.com" -> "hiskaffair.com", a real, correct domain corrupted into a
+    wrong one on every request). startswith()+slice only strips an ACTUAL "www."
+    prefix, matching the correct pattern analytics.py's items_by_domain() already
+    uses."""
     s = (url_or_domain or "").strip().lower()
     if "://" in s:
         s = urlparse(s).netloc
-    return s.lstrip("www.")
+    if s.startswith("www."):
+        s = s[4:]
+    return s
 
 
 def _where(geo_scope: Optional[Dict[str, Any]]) -> str:
@@ -123,11 +144,24 @@ def parse_sites(text: str) -> List[Dict[str, str]]:
     end = text.rfind("}")
     if start == -1 or end == -1 or end < start:
         raise ValueError("No JSON object in model response")
-    data = json.loads(text[start:end + 1])
+
+    try:
+        data = json.loads(text[start:end + 1])
+        raw_sites = data.get("sites") or []
+    except json.JSONDecodeError:
+        # Whole response isn't valid JSON — most commonly a max_tokens cutoff mid-
+        # object (a real risk now that CAP/MAX_TOKENS were raised — see their
+        # docstring). Salvage whatever complete site objects exist rather than
+        # losing all of them, the same fix outlet_discovery.py already proved live.
+        from json_salvage import extract_balanced_objects
+        raw_sites = extract_balanced_objects(text)
+        if not raw_sites:
+            raise ValueError("Model response was not valid JSON and no site objects "
+                             "could be salvaged from it")
 
     sites: List[Dict[str, str]] = []
     seen_domains = set()
-    for s in (data.get("sites") or [])[:CAP]:
+    for s in raw_sites[:CAP]:
         if not isinstance(s, dict):
             continue
         domain = _domain_of(s.get("domain") or "")
@@ -221,7 +255,7 @@ def discover_sites(category: str, geo_scope: Optional[Dict[str, Any]] = None,
     if not category:
         raise ValueError("A category is required to discover sites.")
 
-    call = call_fn or (lambda p, m: __import__("analysis").call_claude(p, m, max_tokens=2000))
+    call = call_fn or (lambda p, m: __import__("analysis").call_claude(p, m, max_tokens=MAX_TOKENS))
     prompt = build_prompt(category, geo_scope, source_type_hint)
     raw = call(prompt, model or settings.analysis_model)
     fresh = parse_sites(raw)
@@ -258,7 +292,7 @@ def find_similar_sites(seed_domain: str, category: str,
     if not category:
         raise ValueError("A category is required.")
 
-    call = call_fn or (lambda p, m: __import__("analysis").call_claude(p, m, max_tokens=2000))
+    call = call_fn or (lambda p, m: __import__("analysis").call_claude(p, m, max_tokens=MAX_TOKENS))
     prompt = build_similar_sites_prompt(seed_domain, category, geo_scope)
     raw = call(prompt, model or settings.analysis_model)
     fresh = [s for s in parse_sites(raw) if s["domain"] != seed_domain]
