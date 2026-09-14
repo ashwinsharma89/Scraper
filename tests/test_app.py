@@ -93,13 +93,38 @@ def test_version_and_mode_endpoints(client):
 
 
 def test_static_assets_are_never_cached(client):
-    # A no-build-step SPA under active iteration must never let a browser silently serve
-    # a stale app.js/index.html after a code change (an empty dropdown with no error is
+    # A SPA under active iteration must never let a browser silently serve a stale
+    # index.html/bundle after a code change (an empty dropdown with no error is
     # exactly what that looks like — this bit us live once already).
     r = client.get("/")
     assert r.headers.get("cache-control") == "no-store"
-    r = client.get("/static/app.js")
+    # The React build's JS bundle is content-hashed (e.g. static/assets/index-XXXX.js),
+    # so this globs for whatever the current build actually produced rather than
+    # hardcoding a filename that changes every rebuild.
+    import glob
+    from pathlib import Path
+    built = glob.glob(str(Path(__file__).resolve().parent.parent / "static" / "assets" / "*.js"))
+    assert built, "no built JS bundle found under static/assets/ — run `npm run build` in frontend/"
+    asset_path = "/static/assets/" + Path(built[0]).name
+    r = client.get(asset_path)
     assert r.headers.get("cache-control") == "no-store"
+
+
+def test_spa_fallback_serves_index_html_for_a_client_side_route(client):
+    # Real bug, found live testing the React rewrite: a direct load or refresh on any
+    # client-side route other than "/" (e.g. /items) 404'd, because only "/" itself
+    # had a route registered -- React Router's own matching never got a chance to run.
+    r = client.get("/items")
+    assert r.status_code == 200
+    assert "<div id=\"root\">" in r.text  # the real SPA shell, not a 404 page
+
+
+def test_spa_fallback_still_404s_a_genuinely_unknown_api_path(client, monkeypatch):
+    monkeypatch.setenv("MODE", "solo")
+    # Must NOT silently return the HTML shell for a bad /api/... call -- that would
+    # hide a real backend error (e.g. a typo'd endpoint) behind a confusing 200.
+    r = client.get("/api/this-endpoint-does-not-exist")
+    assert r.status_code == 404
 
 
 def test_reference_languages_backs_the_wizard_dropdown(client, monkeypatch):

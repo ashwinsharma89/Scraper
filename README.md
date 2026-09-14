@@ -267,9 +267,11 @@ migrations apply cleanly to a previous-version DB.
 
 ## Architecture
 
-Python 3.11+, FastAPI, SQLite (WAL). Single-page vanilla-JS frontend in `/static` (no build
-step). No hard-coded absolute paths; the data directory is set by `MARKETLENS_DATA_DIR`
-(default `./data`).
+Python 3.11+, FastAPI, SQLite (WAL). React + Vite single-page frontend — source in
+`/frontend`, built into `/static` (which `app.py` serves as-is; the build is committed
+so a checkout runs with no Node/npm needed unless you're editing the frontend itself —
+see `CLAUDE.md`'s Frontend section). No hard-coded absolute paths; the data directory is
+set by `MARKETLENS_DATA_DIR` (default `./data`).
 
 | Module | Responsibility |
 |---|---|

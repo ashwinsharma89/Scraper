@@ -19,3 +19,10 @@ __pycache__/
 
 # stray logs
 *.log
+
+# Frontend (React + Vite, see frontend/README or CLAUDE.md) — node_modules is huge and
+# fully regeneratable via `npm install`; the BUILT output (static/assets/, static/
+# index.html) IS committed on purpose so a fresh checkout can run `python app.py`
+# immediately without requiring Node/npm at all — only rebuild when editing frontend/src.
+frontend/node_modules/
+frontend/dist/

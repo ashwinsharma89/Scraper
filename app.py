@@ -932,6 +932,27 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+@app.get("/{full_path:path}", response_class=HTMLResponse)
+def spa_fallback(full_path: str):
+    """React Router client-side routing (adopted with the React rewrite) means a direct
+    load or a refresh on e.g. /items must still return the SPA shell, not a 404 — the
+    browser then runs React Router's own matching against that path. Real bug, found
+    live: before this existed, refreshing on any tab other than "/" 404'd.
+
+    Every real /api/* route is registered above this catch-all, so an actual API call
+    always matches its own route first — this only ever fires for a GET that didn't
+    match anything else. An unmatched /api/... path still 404s explicitly here rather
+    than silently returning the HTML shell, which would hide a genuine backend error
+    (e.g. a typo'd endpoint) behind a confusing 200.
+    """
+    if full_path == "api" or full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    idx = STATIC_DIR / "index.html"
+    if idx.exists():
+        return HTMLResponse(idx.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>MarketLens</h1><p>Static UI not found.</p>", status_code=404)
+
+
 def main():
     import uvicorn
 

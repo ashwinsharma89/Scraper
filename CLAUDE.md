@@ -6,7 +6,8 @@ overview is in `README.md`.
 
 ## What this is
 Local-first market & product intelligence tool. Python 3.11+ / FastAPI / SQLite (WAL) /
-vanilla-JS SPA in `/static` (no build step). Pipeline the whole app is organized around:
+React + Vite SPA (source in `/frontend`, built into `/static`, which `app.py` serves
+unchanged — see "Frontend" below). Pipeline the whole app is organized around:
 **Configure (wizard) → Collect (scrapers) → Analyze (Claude) → Export (Excel + report).**
 
 ## Non-negotiable principles (this IS the product)
@@ -35,6 +36,25 @@ pkill -f "app.py"; rm -rf data && python seed_demo.py
 If you hit `ModuleNotFoundError`, run `pip install -r requirements.txt` (the venv may lack
 heavy deps: anthropic, playwright, pytrends, Pillow, python-docx). Port 8000 busy →
 `lsof -ti:8000 | xargs kill -9`.
+
+## Frontend (React + Vite, `/frontend`)
+Source lives in `frontend/src`; the BUILT output (`static/index.html`, `static/assets/*`)
+is committed to git so a fresh checkout runs `python app.py` immediately with **no
+Node/npm required** — the build is only needed when you actually edit `frontend/src`.
+```bash
+cd frontend && npm install     # once
+npm run build                  # rebuild static/ after any frontend/src change
+npm run dev                    # optional: dev server on :5173, proxies /api to :8000
+```
+`vite.config.js` sets `base: "/static/"` and `outDir: "../static"` — this is the entire
+integration point; `app.py` was NOT changed to adopt React beyond one addition (below).
+Client-side routing (React Router) means a direct load or refresh on any route other
+than `/` needs the server to return the SPA shell, not 404 — that's `app.py`'s
+`spa_fallback` catch-all route (registered after every real `/api/*` route, so a bad
+API path still 404s honestly instead of silently returning HTML).
+**After changing anything in `frontend/src`, always run `npm run build` before
+committing** — the repo's `static/` must stay in sync with `frontend/src`, since that's
+what actually ships.
 
 ## Do NOT "fix" these (they are honest limitations, not bugs)
 - **Google News article bodies are unresolvable** (encrypted URL token) — don't build a GN

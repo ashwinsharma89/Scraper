@@ -23,8 +23,10 @@ context. Read `README.md` for the product overview; this file is the *engineerin
 ## 1. What this is & where it lives
 
 - Path: `/Users/ashwin/Desktop/marketlens` (NOT a git repo yet — consider `git init`).
-- Stack: Python 3.11+ (dev machine has 3.13), FastAPI, SQLite (WAL), vanilla-JS SPA in
-  `/static` (no build step). Data dir is `./data` (gitignored), set by `MARKETLENS_DATA_DIR`.
+- Stack: Python 3.11+ (dev machine has 3.13), FastAPI, SQLite (WAL), React + Vite SPA
+  (source `/frontend`, built into `/static`, committed — see CLAUDE.md's Frontend section;
+  this replaced an earlier vanilla-JS/no-build-step frontend). Data dir is `./data`
+  (gitignored), set by `MARKETLENS_DATA_DIR`.
 - Solo mode (default): `127.0.0.1`, no auth. Team mode: `MODE=team`, login required.
 
 ## 2. Run it / test it
